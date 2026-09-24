@@ -9,11 +9,15 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrNotFound = errors.New("delivery: not found")
+var (
+	ErrNotFound            = errors.New("delivery: not found")
+	ErrInvalidClaimRequest = errors.New("delivery: invalid claim request")
+)
 
 type Claim struct {
 	WorkspaceID, DeliveryID, EventID, EndpointID uuid.UUID
 	FencingToken                                 int64
+	AttemptNumber, MaxAttempts                   int16
 	Scheme, Host                                 string
 	Port                                         int
 	Target                                       cryptobox.Envelope
@@ -22,6 +26,40 @@ type Claim struct {
 	KeyID                                        string
 	SecretVersionID                              uuid.UUID
 	Secret                                       cryptobox.Envelope
+}
+
+type Disposition string
+
+const (
+	DispositionSuccess   Disposition = "success"
+	DispositionRetry     Disposition = "retry"
+	DispositionPermanent Disposition = "permanent_failure"
+)
+
+type Result struct {
+	Disposition Disposition
+	HTTPStatus  *int16
+	DurationMS  int
+	Category    string
+	RetryAfter  time.Duration
+}
+
+type ClaimRequest struct {
+	WorkerID       uuid.UUID
+	LeaseTTL       time.Duration
+	Limit          int
+	WorkspaceLimit int
+	EndpointLimit  int
+}
+
+func (request ClaimRequest) Validate() error {
+	if request.WorkerID == uuid.Nil || request.LeaseTTL < 20*time.Second || request.LeaseTTL > 2*time.Minute ||
+		request.Limit < 1 || request.Limit > 100 || request.WorkspaceLimit < 1 ||
+		request.WorkspaceLimit > request.Limit || request.EndpointLimit < 1 ||
+		request.EndpointLimit > request.Limit {
+		return ErrInvalidClaimRequest
+	}
+	return nil
 }
 
 type Attempt struct {
@@ -46,7 +84,7 @@ type Details struct {
 }
 
 type Store interface {
-	Claim(context.Context, uuid.UUID, uuid.UUID, time.Duration) (Claim, bool, error)
-	Finalize(context.Context, Claim, uuid.UUID, bool, *int16, int, string) (bool, error)
+	ClaimBatch(context.Context, ClaimRequest) ([]Claim, error)
+	Finalize(context.Context, Claim, uuid.UUID, Result) (bool, error)
 	Get(context.Context, uuid.UUID, uuid.UUID) (Details, error)
 }

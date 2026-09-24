@@ -28,7 +28,42 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 	if cfg.AllowHTTPDestinations, err = boolEnv(lookup, "WDE_ALLOW_HTTP_DESTINATIONS", false); err != nil {
 		return err
 	}
+	if cfg.Service == ServiceWorker {
+		if err := applyWorkerEnvironment(cfg, lookup); err != nil {
+			return err
+		}
+	}
 	applySecretPaths(cfg, lookup)
+	return nil
+}
+
+func applyWorkerEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
+	integers := []struct {
+		name   string
+		target *int
+	}{{"WDE_WORKER_CONCURRENCY", &cfg.WorkerConcurrency}, {"WDE_WORKER_CLAIM_BATCH_SIZE", &cfg.WorkerClaimBatchSize},
+		{"WDE_WORKER_WORKSPACE_BATCH_LIMIT", &cfg.WorkerWorkspaceLimit}, {"WDE_WORKER_ENDPOINT_BATCH_LIMIT", &cfg.WorkerEndpointLimit}}
+	for _, item := range integers {
+		value, err := intEnv(lookup, item.name, *item.target)
+		if err != nil {
+			return err
+		}
+		*item.target = value
+	}
+	durations := []struct {
+		name   string
+		target *time.Duration
+	}{{"WDE_WORKER_POLL_INTERVAL", &cfg.WorkerPollInterval}, {"WDE_WORKER_CLAIM_TIMEOUT", &cfg.WorkerClaimTimeout},
+		{"WDE_WORKER_REQUEST_TIMEOUT", &cfg.WorkerRequestTimeout},
+		{"WDE_WORKER_LEASE_TTL", &cfg.WorkerLeaseTTL}, {"WDE_WORKER_RETRY_BASE", &cfg.WorkerRetryBase},
+		{"WDE_WORKER_RETRY_CAP", &cfg.WorkerRetryCap}}
+	for _, item := range durations {
+		value, err := durationEnv(lookup, item.name, *item.target)
+		if err != nil {
+			return err
+		}
+		*item.target = value
+	}
 	return nil
 }
 
@@ -70,6 +105,16 @@ func applyFlags(cfg *Config, args []string) error {
 	ingressTLS := flags.Bool("ingress-tls-terminated", cfg.IngressTLSTerminated, "declare trusted ingress TLS termination")
 	pprof := flags.Bool("enable-pprof", cfg.EnablePprof, "enable local profiling")
 	allowHTTP := flags.Bool("allow-http-destinations", cfg.AllowHTTPDestinations, "allow HTTP destinations outside production")
+	workerConcurrency := flags.Int("worker-concurrency", cfg.WorkerConcurrency, "maximum concurrent deliveries")
+	workerBatch := flags.Int("worker-claim-batch-size", cfg.WorkerClaimBatchSize, "maximum claims per poll")
+	workerWorkspaceLimit := flags.Int("worker-workspace-batch-limit", cfg.WorkerWorkspaceLimit, "claims per workspace in one batch")
+	workerEndpointLimit := flags.Int("worker-endpoint-batch-limit", cfg.WorkerEndpointLimit, "claims per endpoint in one batch")
+	workerPoll := flags.Duration("worker-poll-interval", cfg.WorkerPollInterval, "empty queue poll interval")
+	workerClaimTimeout := flags.Duration("worker-claim-timeout", cfg.WorkerClaimTimeout, "claim database deadline")
+	workerRequestTimeout := flags.Duration("worker-request-timeout", cfg.WorkerRequestTimeout, "outbound request timeout")
+	workerLeaseTTL := flags.Duration("worker-lease-ttl", cfg.WorkerLeaseTTL, "delivery lease duration")
+	workerRetryBase := flags.Duration("worker-retry-base", cfg.WorkerRetryBase, "retry exponential base")
+	workerRetryCap := flags.Duration("worker-retry-cap", cfg.WorkerRetryCap, "retry maximum delay")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}
@@ -79,6 +124,11 @@ func applyFlags(cfg *Config, args []string) error {
 	applyParsedFlags(cfg, *profile, *httpAddr, *operationalAddr, *logLevel, *version)
 	cfg.ShutdownTimeout, cfg.DatabaseTimeout = *shutdownTimeout, *databaseTimeout
 	cfg.IngressTLSTerminated, cfg.EnablePprof, cfg.AllowHTTPDestinations = *ingressTLS, *pprof, *allowHTTP
+	cfg.WorkerConcurrency, cfg.WorkerClaimBatchSize = *workerConcurrency, *workerBatch
+	cfg.WorkerWorkspaceLimit, cfg.WorkerEndpointLimit = *workerWorkspaceLimit, *workerEndpointLimit
+	cfg.WorkerPollInterval, cfg.WorkerClaimTimeout = *workerPoll, *workerClaimTimeout
+	cfg.WorkerRequestTimeout = *workerRequestTimeout
+	cfg.WorkerLeaseTTL, cfg.WorkerRetryBase, cfg.WorkerRetryCap = *workerLeaseTTL, *workerRetryBase, *workerRetryCap
 	return nil
 }
 
@@ -108,6 +158,18 @@ func durationEnv(lookup func(string) (string, bool), name string, fallback time.
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return 0, fmt.Errorf("config: %s must be a duration", name)
+	}
+	return parsed, nil
+}
+
+func intEnv(lookup func(string) (string, bool), name string, fallback int) (int, error) {
+	value, ok := lookup(name)
+	if !ok {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s must be an integer", name)
 	}
 	return parsed, nil
 }

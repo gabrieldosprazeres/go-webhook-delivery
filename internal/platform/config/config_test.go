@@ -3,10 +3,12 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadUsesFlagsAfterEnvironment(t *testing.T) {
@@ -94,6 +96,40 @@ func TestHTTPDestinationFlagIsLoadedLocallyAndRejectedInProduction(t *testing.T)
 	})
 	if err == nil || !strings.Contains(err.Error(), "WDE_ALLOW_HTTP_DESTINATIONS") {
 		t.Fatalf("Load() error = %v, want production HTTP rejection", err)
+	}
+}
+
+func TestWorkerReliabilityConfiguration(t *testing.T) {
+	base := map[string]string{
+		"WDE_PROFILE": "test", "WDE_DATABASE_URL": "postgres://test:test@localhost:5432/wde?sslmode=disable",
+		"WDE_WORKER_CONCURRENCY": "12", "WDE_WORKER_CLAIM_BATCH_SIZE": "6",
+		"WDE_WORKER_WORKSPACE_BATCH_LIMIT": "3", "WDE_WORKER_ENDPOINT_BATCH_LIMIT": "2",
+		"WDE_WORKER_POLL_INTERVAL": "100ms", "WDE_WORKER_CLAIM_TIMEOUT": "50ms",
+		"WDE_WORKER_REQUEST_TIMEOUT": "5s",
+		"WDE_WORKER_LEASE_TTL":       "20s", "WDE_WORKER_RETRY_BASE": "2s", "WDE_WORKER_RETRY_CAP": "10m",
+	}
+	cfg, err := Load(LoadOptions{Service: ServiceWorker, LookupEnv: mapLookup(base)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WorkerConcurrency != 12 || cfg.WorkerClaimBatchSize != 6 || cfg.WorkerLeaseTTL.String() != "20s" {
+		t.Fatalf("worker config=%+v", cfg)
+	}
+
+	invalid := maps.Clone(base)
+	invalid["WDE_WORKER_LEASE_TTL"] = "14s"
+	if _, err = Load(LoadOptions{Service: ServiceWorker, LookupEnv: mapLookup(invalid)}); err == nil || !strings.Contains(err.Error(), "LEASE_TTL") {
+		t.Fatalf("lease validation error=%v", err)
+	}
+	invalid = maps.Clone(base)
+	invalid["WDE_WORKER_CLAIM_BATCH_SIZE"] = "13"
+	if _, err = Load(LoadOptions{Service: ServiceWorker, LookupEnv: mapLookup(invalid)}); err == nil || !strings.Contains(err.Error(), "CLAIM_BATCH_SIZE") {
+		t.Fatalf("batch validation error=%v", err)
+	}
+	invalid = maps.Clone(base)
+	invalid["WDE_WORKER_CLAIM_TIMEOUT"] = "101ms"
+	if _, err = Load(LoadOptions{Service: ServiceWorker, LookupEnv: mapLookup(invalid)}); err == nil || !strings.Contains(err.Error(), "CLAIM_TIMEOUT") {
+		t.Fatalf("claim timeout validation error=%v", err)
 	}
 }
 
@@ -221,15 +257,20 @@ func TestProductionRejectsSecretSymlink(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 	cfg := Config{
-		Service:         ServiceWorker,
-		Profile:         ProfileProduction,
-		Version:         "test",
-		LogLevel:        "info",
-		DatabaseURL:     "postgres://worker@example.com:5432/wde?sslmode=verify-full",
-		DatabaseTimeout: defaultDatabaseTimeout,
-		ShutdownTimeout: defaultShutdownTimeout,
-		OperationalAddr: "127.0.0.1:9091",
-		Secrets:         SecretFiles{PayloadKeyring: link, SigningKeyring: link},
+		Service:           ServiceWorker,
+		Profile:           ProfileProduction,
+		Version:           "test",
+		LogLevel:          "info",
+		DatabaseURL:       "postgres://worker@example.com:5432/wde?sslmode=verify-full",
+		DatabaseTimeout:   defaultDatabaseTimeout,
+		ShutdownTimeout:   defaultShutdownTimeout,
+		OperationalAddr:   "127.0.0.1:9091",
+		WorkerConcurrency: 8, WorkerClaimBatchSize: 8,
+		WorkerWorkspaceLimit: 2, WorkerEndpointLimit: 2,
+		WorkerPollInterval: 250 * time.Millisecond, WorkerClaimTimeout: 200 * time.Millisecond,
+		WorkerRequestTimeout: 10 * time.Second,
+		WorkerLeaseTTL:       30 * time.Second, WorkerRetryBase: time.Second, WorkerRetryCap: 15 * time.Minute,
+		Secrets: SecretFiles{PayloadKeyring: link, SigningKeyring: link},
 	}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("Validate() error = %v, want symlink rejection", err)

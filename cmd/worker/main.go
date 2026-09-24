@@ -54,7 +54,16 @@ func run(parent context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	runner := delivery.NewRunner(delivery.NewPostgresStore(pool), materials, cfg.Profile, cfg.AllowHTTPDestinations, workerID)
+	runner := delivery.NewRunnerWithOptions(delivery.NewPostgresStore(pool), materials, cfg.Profile,
+		cfg.AllowHTTPDestinations, workerID, delivery.RunnerOptions{
+			Poll: cfg.WorkerPollInterval, ClaimTimeout: cfg.WorkerClaimTimeout,
+			RequestTimeout: cfg.WorkerRequestTimeout,
+			LeaseTTL:       cfg.WorkerLeaseTTL, Shutdown: cfg.ShutdownTimeout,
+			Concurrency: cfg.WorkerConcurrency, BatchSize: cfg.WorkerClaimBatchSize,
+			WorkspaceLimit: cfg.WorkerWorkspaceLimit, EndpointLimit: cfg.WorkerEndpointLimit,
+			Retry: delivery.RetryPolicy{Base: cfg.WorkerRetryBase, Cap: cfg.WorkerRetryCap,
+				Jitter: delivery.DefaultRetryPolicy().Jitter},
+		})
 	listener, err := net.Listen("tcp", cfg.OperationalAddr)
 	if err != nil {
 		return err

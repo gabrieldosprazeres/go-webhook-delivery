@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,19 +22,19 @@ type runnerStore struct {
 	claim     Claim
 	claimed   bool
 	finalized bool
-	success   bool
+	result    Result
 }
 
-func (s *runnerStore) Claim(context.Context, uuid.UUID, uuid.UUID, time.Duration) (Claim, bool, error) {
+func (s *runnerStore) ClaimBatch(_ context.Context, request ClaimRequest) ([]Claim, error) {
 	if s.claimed {
-		return Claim{}, false, nil
+		return nil, nil
 	}
 	s.claimed = true
-	return s.claim, true, nil
+	return []Claim{s.claim}, nil
 }
-func (s *runnerStore) Finalize(_ context.Context, _ Claim, _ uuid.UUID, success bool, _ *int16, _ int, _ string) (bool, error) {
+func (s *runnerStore) Finalize(_ context.Context, _ Claim, _ uuid.UUID, result Result) (bool, error) {
 	s.finalized = true
-	s.success = success
+	s.result = result
 	return true, nil
 }
 func (*runnerStore) Get(context.Context, uuid.UUID, uuid.UUID) (Details, error) {
@@ -72,8 +73,8 @@ func TestProcessOneSignsRawBodyAndFinalizesSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !worked || !store.finalized || !store.success {
-		t.Fatalf("worked=%v finalized=%v success=%v", worked, store.finalized, store.success)
+	if !worked || !store.finalized || store.result.Disposition != DispositionSuccess {
+		t.Fatalf("worked=%v finalized=%v result=%+v", worked, store.finalized, store.result)
 	}
 }
 
@@ -82,7 +83,38 @@ func TestHTTPDeliveryRequiresExplicitFlag(t *testing.T) {
 	materials, _ := cryptobox.Load(config.ProfileTest, config.SecretFiles{})
 	runner := NewRunner(store, materials, config.ProfileTest, false, uuid.New())
 	worked, err := runner.ProcessOne(context.Background())
-	if err != nil || !worked || !store.finalized || store.success {
-		t.Fatalf("worked=%v finalized=%v success=%v err=%v", worked, store.finalized, store.success, err)
+	if err != nil || !worked || !store.finalized || store.result.Disposition != DispositionPermanent {
+		t.Fatalf("worked=%v finalized=%v result=%+v err=%v", worked, store.finalized, store.result, err)
+	}
+}
+
+func TestClaimRequestValidationHappensBeforeAllocation(t *testing.T) {
+	if _, err := NewPostgresStore(nil).ClaimBatch(context.Background(), ClaimRequest{}); !errors.Is(err, ErrInvalidClaimRequest) {
+		t.Fatalf("invalid request reached store allocation: %v", err)
+	}
+	valid := ClaimRequest{WorkerID: uuid.New(), LeaseTTL: 20 * time.Second, Limit: 2, WorkspaceLimit: 1, EndpointLimit: 1}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	invalid := []ClaimRequest{
+		{},
+		{WorkerID: uuid.New(), LeaseTTL: 19 * time.Second, Limit: 1, WorkspaceLimit: 1, EndpointLimit: 1},
+		{WorkerID: uuid.New(), LeaseTTL: 20 * time.Second, Limit: 101, WorkspaceLimit: 1, EndpointLimit: 1},
+		{WorkerID: uuid.New(), LeaseTTL: 20 * time.Second, Limit: 1, WorkspaceLimit: 2, EndpointLimit: 1},
+		{WorkerID: uuid.New(), LeaseTTL: 20 * time.Second, Limit: 1, WorkspaceLimit: 1, EndpointLimit: 2},
+	}
+	for index, request := range invalid {
+		if err := request.Validate(); !errors.Is(err, ErrInvalidClaimRequest) {
+			t.Fatalf("request[%d] err=%v", index, err)
+		}
+	}
+}
+
+func TestNormalizeResultRejectsOutOfRangeStatus(t *testing.T) {
+	status := int16(699)
+	result := normalizeResult(Result{Disposition: DispositionRetry, HTTPStatus: &status, Category: "http_retryable", RetryAfter: time.Second})
+	if result.Disposition != DispositionPermanent || result.HTTPStatus != nil ||
+		result.Category != "invalid_http_status" || result.RetryAfter != 0 {
+		t.Fatalf("result=%+v", result)
 	}
 }

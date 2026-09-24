@@ -154,7 +154,7 @@ Depois dessas correções, o DDL real e as migrations ainda devem passar por uma
 
 | Achado | Status na v1.1 | Evidência e lacuna remanescente |
 |---|---|---|
-| `SCHEMA-SEC-001` | Remediado no desenho | Roles executoras `NOLOGIN`, policies específicas sob `FORCE RLS`, funções com `search_path = pg_catalog`, objetos qualificados, `PUBLIC EXECUTE` revogado e `set_config(..., true)` dentro de transação explícita fecham o modelo. O DDL deve conceder às executoras somente os privilégios de tabela indispensáveis e testar `prosecdef`, `proconfig`, ACLs e reutilização do pool. |
+| `SCHEMA-SEC-001` | Remediado e materializado na Sprint 2 | Roles executoras `NOLOGIN`, policies específicas sob `FORCE RLS`, funções com `search_path = pg_catalog`, objetos qualificados e `PUBLIC EXECUTE` revogado. Testes PostgreSQL 17 inspecionam `prosecdef`, `proconfig`, owners, RLS, grants por coluna e ACL da sequence. |
 | `SCHEMA-SEC-002` | Remediado | `run_number`, `attempts_in_run` e `attempt_sequence` separam retries de replays; uniques preservam histórico. Replay incrementa run, zera apenas o contador do run e mantém fencing/sequence monotônicos na mesma transação do comando e da auditoria. |
 | `SCHEMA-SEC-003` | Remediado com estratégia conservadora | Restore entra em quarentena, revoga todas as chaves, suspende workspaces, desabilita endpoints e invalida leases antes da readiness. O runbook e o teste de restauração são obrigatórios; a proteção depende de a automação impedir promoção sem o comando one-shot. |
 | `SCHEMA-SEC-004` | Remediado | FKs operacionais usam `RESTRICT`, a ordem de purge é explícita, auditoria não sofre cascade e payload só é removido depois de bloquear/reconciliar deliveries ativas e invalidar workers atrasados por fencing. |
@@ -163,20 +163,34 @@ Depois dessas correções, o DDL real e as migrations ainda devem passar por uma
 | `SCHEMA-SEC-007` | Remediado no desenho | O fluxo fecha attempt expirado como `abandoned`, impede `max + 1`, decide `dead_letter` antes de nova chamada e cria claim+attempt atomicamente. A query ilustrativa anterior na seção 6 ainda não expressa sozinha todos esses ramos; a função/CTE definitiva deve seguir o algoritmo normativo em quatro passos e substituí-la nos testes/DDL. |
 | `SCHEMA-SEC-008` | Remediado | Matriz de ownership e grants proíbe DML direto em attempts/auditoria; funções estreitas impõem transição terminal única e auditoria atômica com a ação sensível. |
 | `SCHEMA-SEC-009` | Remediado | Default privileges e ownership são definidos no bootstrap; cada tabela nasce fail-closed com RLS/policy/revogação na mesma transação; fixtures saíram da cadeia produtiva e o CI testa interrupção entre migrations. |
-| `SCHEMA-SEC-010` | Remediado no desenho | Índices de fan-out, attempts, purge, buckets e jobs foram definidos; scheduler possui teto por workspace/endpoint, alternância determinística, timeout por role e teste de saturação. Planos reais ainda devem ser medidos com massa representativa. |
+| `SCHEMA-SEC-010` | Remediado na fatia implementada | Scheduler possui teto/cursor por workspace e endpoint, sequence sem lock global e deadline tipado por claim. Testes com locks independentes, saturação e `EXPLAIN (ANALYZE, BUFFERS)` sobre 5.000 jobs comprovam progresso e uso de `deliveries_ready_idx`; índices das fatias futuras continuam no backlog correspondente. |
 
-### 5.2 Lacunas remanescentes não bloqueadoras para o backlog
+### 5.2 Matriz materializada da fila na Sprint 2
+
+| Objeto | Owner | Acesso da executora | Role login | RLS/policy |
+|---|---|---|---|---|
+| `workspaces.last_delivery_claim_sequence` | `wde_owner` | `SELECT` e `UPDATE` somente da coluna | nenhum DML direto | `FORCE RLS`; select/update somente workspace `active` |
+| `endpoint_runtime.last_delivery_claim_sequence` | `wde_owner` | `SELECT`; update das colunas de lock/cursor/timestamp | nenhum DML direto | `FORCE RLS`; policy exclusiva da executora |
+| `delivery_claim_sequence` | `wde_worker_executor` | uso por ownership dentro da função | sem `USAGE` para API/worker/admin/PUBLIC | não aplicável; sequence não possui RLS |
+| `claim_deliveries` / `finalize_delivery` | `wde_worker_executor` | `SECURITY DEFINER`, `search_path=pg_catalog` | somente `wde_worker EXECUTE` | argumentos e transições validados |
+| helpers `recover`, `select_candidate`, `claim_one` | `wde_worker_executor` | execução interna | sem `EXECUTE` para roles login/PUBLIC | funções individuais abaixo de 100 linhas |
+
+`select_candidate` adquire apenas locks de workspace, endpoint runtime e delivery com `SKIP LOCKED`. A monotonicidade usa `nextval`, que não mantém row lock transacional global. O wrapper e os helpers continuam na mesma transação do statement, preservando claim, attempt e fencing atômicos. O deadline do contexto é aplicado também dentro do store PostgreSQL, de modo que cancelamento do driver não dependa do handler.
+
+Durante os boundaries Goose 3–5, `claim_deliveries_v3_stage` e `finalize_delivery_v3_stage` não concedem `EXECUTE` a `PUBLIC` nem a roles login, enquanto os dois contratos v2 permanecem executáveis pelo worker. A `000006` troca nomes, grants e versão lógica na mesma transação; seu `down` restaura v2 e `schema_version=2` também atomicamente. O teste de boundary inspeciona existência e ACL em cada subida e descida e confirma que o runtime v3 falha fechado enquanto o banco anuncia v2.
+
+### 5.3 Lacunas remanescentes não bloqueadoras para o backlog
 
 As lacunas abaixo são evidências de implementação, não decisões arquiteturais ausentes:
 
 1. materializar a matriz de acesso em DDL e comprovar roles reais, policies, owners, default privileges e funções `SECURITY DEFINER` em PostgreSQL 17;
-2. transformar o algoritmo normativo de claim em uma única função/CTE, sem copiar isoladamente a query ilustrativa que ainda mostra o caminho simplificado;
+2. manter os helpers privilegiados estreitos e o statement externo atômico ao evoluir replay, purge ou novas classes de job;
 3. tornar o estado de quarentena de restore persistente e fail-closed, documentar o comando one-shot e provar que restart entre restore e reconciliação não libera readiness;
 4. detalhar checks de coerência terminal no DDL, incluindo limpeza de `terminal_at` no replay, all-or-none dos envelopes e combinações permitidas de outcome/status;
-5. validar índices, fairness, batches e `statement_timeout` com `EXPLAIN (ANALYZE, BUFFERS)`, backlog adversarial e purge concorrente;
+5. repetir `EXPLAIN`, fairness e limites de contexto a cada mudança de índice/distribuição; purge concorrente pertence à sprint de retenção;
 6. submeter as migrations e funções reais a revisão curta de segurança antes do primeiro release.
 
-### 5.3 Gate final da reavaliação
+### 5.4 Gate final da reavaliação
 
 **Gate: APROVADO CONDICIONALMENTE para backlog e implementação incremental.** Os quatro achados P0 e os seis P1 receberam decisões normativas suficientes na arquitetura de dados v1.1. Não resta bloqueador conceitual que justifique impedir o avanço ao backlog ou o início do primeiro corte vertical.
 

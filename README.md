@@ -2,7 +2,7 @@
 
 Servico de entrega confiavel de webhooks escrito em Go. O projeto demonstra ingestao idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento multi-tenant, assinatura HMAC, defesa SSRF e operacao observavel.
 
-> Estado atual: Sprint 1 implementada. O primeiro corte vertical cria endpoints, publica eventos idempotentes, assina e entrega webhooks, e expoe a timeline da delivery. O projeto nunca promete `exactly-once`.
+> Estado atual: Sprint 2 implementada. Alem do corte vertical, o worker processa batches concorrentes com fairness, recupera leases com fencing, aplica retry exponencial com full jitter e encerra entregas esgotadas em DLQ. O projeto nunca promete `exactly-once`.
 
 ## Stack
 
@@ -85,12 +85,25 @@ Principais variaveis:
 | `WDE_WORKER_OPERATIONAL_ADDR` | probes do worker; default `127.0.0.1:9091` |
 | `WDE_CHAOSLAB_HTTP_ADDR` | listener local; default `127.0.0.1:8081` |
 | `WDE_ALLOW_HTTP_DESTINATIONS` | habilita explicitamente destinos HTTP loopback fora de produção |
+| `WDE_WORKER_CONCURRENCY` | jobs HTTP simultaneos; default `8` |
+| `WDE_WORKER_CLAIM_BATCH_SIZE` | claims por ciclo, sempre menor ou igual a concorrencia; default `8` |
+| `WDE_WORKER_WORKSPACE_BATCH_LIMIT` | teto de claims por workspace em um batch; default `2` |
+| `WDE_WORKER_ENDPOINT_BATCH_LIMIT` | teto de claims por endpoint em um batch; default `2` |
+| `WDE_WORKER_POLL_INTERVAL` | base do backoff com jitter quando a fila esta vazia; default `250ms` |
+| `WDE_WORKER_CLAIM_TIMEOUT` | deadline de cada acesso de claim ao banco; default `200ms`, sempre menor ou igual ao poll e ao lease |
+| `WDE_WORKER_REQUEST_TIMEOUT` | timeout HTTP total; default `10s`, maximo `20s` |
+| `WDE_WORKER_LEASE_TTL` | validade do lease; default `30s` e margem minima de `10s` sobre o timeout |
+| `WDE_WORKER_RETRY_BASE` / `WDE_WORKER_RETRY_CAP` | janela exponencial com full jitter; defaults `1s` / `15m` |
 | `WDE_SHUTDOWN_TIMEOUT` | prazo de shutdown; default `30s` |
 | `WDE_LOG_LEVEL` | `debug`, `info`, `warn` ou `error` |
 | `WDE_INGRESS_TLS_TERMINATED` | declaracao obrigatoria para API em producao |
 | `WDE_*_FILE` | paths de peppers e keyrings montados em producao |
 
 No profile `production`, o startup falha se o PostgreSQL nao usar `sslmode=verify-full`, TLS de entrada nao estiver declarado, profiling/HTTP externo estiver habilitado ou os secret files estiverem ausentes, forem symlinks, tiverem permissoes acima de `0600` ou pertencerem a outro UID.
+
+O scheduler nunca reserva mais que os slots livres. Uma sequence monotônica, sem row lock global, alimenta cursores persistidos por workspace e endpoint inclusive entre batches unitários e workers concorrentes. Workspace, endpoint runtime e delivery usam locks locais com `SKIP LOCKED`, portanto um tenant travado não impede progresso independente. Cada claim possui deadline de banco explícito. Polling vazio usa backoff exponencial com jitter para evitar sincronização entre instâncias. Um lease expirado abandona a tentativa antiga e incrementa o fencing token antes de novo envio. Resultados com owner/token vencidos afetam zero linhas.
+
+Timeouts, erros de rede, `408`, `425`, `429` e `5xx` recebem retry. Redirects, os demais `4xx` e status fora de `100..599` sao falhas permanentes. O atraso usa full jitter exponencial; `Retry-After` so e aceito quando valido e dentro do teto, caso contrario a politica padrao prevalece. A ultima falha transitoria termina em `dead_letter`, preservando todas as tentativas. Em `SIGINT`/`SIGTERM`, o worker para novos claims, drena jobs, cancela os restantes antes do fim e retorna no deadline absoluto de no maximo 30 segundos mesmo diante de dependencia nao cooperativa.
 
 Peppers produtivos usam uma linha `v1:<base64url-sem-padding>` com exatamente 32 bytes aleatorios. Keyrings usam JSON versionado, tambem com chaves de exatamente 32 bytes:
 
@@ -114,6 +127,7 @@ Peppers de autenticacao, idempotencia e fingerprint, assim como os keyrings de p
 make help
 make fmt
 make test
+make integration
 make race
 make vet
 make staticcheck
