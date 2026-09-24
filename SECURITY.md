@@ -2,9 +2,9 @@
 
 ## Versões suportadas
 
-Enquanto o projeto não publicar `v1.0.0`, somente o estado mais recente de `main`
-recebe correções. Depois da primeira release, a versão mais recente será suportada;
-versões anteriores deverão ser atualizadas antes de receber suporte.
+A linha `1.x` mais recente recebe correções de segurança. Versões anteriores devem ser
+atualizadas antes de receber suporte. O projeto de portfólio não possui prazo formal
+de suporte ou SLA.
 
 ## Como reportar
 

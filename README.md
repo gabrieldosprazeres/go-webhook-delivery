@@ -2,7 +2,9 @@
 
 Servico de entrega confiavel de webhooks escrito em Go. O projeto demonstra ingestao idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento multi-tenant, assinatura HMAC, defesa SSRF e operacao observavel.
 
-> Estado atual: Sprint 6 implementada e aguardando Code Review/QA/security audit independentes antes da release. O engine inclui entrega concorrente, segurança de saída e dados, retenção, observabilidade, imagens hardened, SBOM/scan e demonstração automatizada. O projeto nunca promete `exactly-once`.
+> Estado atual: `v1.0.0` concluída e validada localmente. Code Review, QA, auditoria
+> OWASP, matriz adversarial, rollback, smoke de containers, SBOM e scans passaram sem
+> ressalvas bloqueadoras. O projeto nunca promete `exactly-once`.
 
 ## Stack
 
@@ -237,12 +239,15 @@ docs/                PRD, arquitetura, ADRs, seguranca, backlog e status
 
 ## Decisoes e seguranca
 
+- [Changelog da v1.0.0](CHANGELOG.md)
 - [Arquitetura](docs/webhook-delivery-engine-architecture.md)
 - [Arquitetura de dados](docs/webhook-delivery-engine-data-architecture.md)
 - [Backlog do MVP](docs/webhook-delivery-engine-backlog.md)
 - [ADRs](docs/adr/)
 - [Status](docs/webhook-delivery-engine-status.md)
 - [Política de segurança](SECURITY.md)
+- [Auditoria de segurança final](docs/webhook-delivery-engine-security-audit.md)
+- [QA final da Sprint 6](docs/webhook-delivery-engine-qa-sprint-6.md)
 - [Runbook operacional](docs/operations-runbook.md)
 - [Demonstração de portfólio](docs/demo-runbook.md)
 - [Supply chain e imagens](docs/supply-chain.md)

@@ -1,7 +1,7 @@
 # Status: Webhook Delivery Engine
 
 **Atualizado em:** 2026-09-24
-**Branch:** `feature/sprint-6-hardening-release`
+**Branch:** `main`
 
 ## Planejamento
 
@@ -322,14 +322,16 @@ Sprint 5 aprovada em Code Review e QA, apta para commit e integração em `main`
 - ✅ S6-02 — Benchmarks e profiling — implementada pelo Stack Agent
 - ✅ S6-03 — Containers, SBOM e scan — implementada pelo Stack Agent
 - ✅ S6-04 — Runbook e demonstração — implementada pelo Stack Agent
-- ❌ Code Review independente — rodada 1 reprovada com zero blocker, cinco warnings e
-  uma suggestion
+- ✅ Code Review independente — aprovado na rodada 4 com zero blocker, warning ou
+  suggestion
 - ✅ Correções da rodada 1 — implementadas e validadas pelo Stack Agent
 - ✅ Correções da rodada 2 — implementadas; probes focados e gates sem container verdes
-- ⚠️ Rebuild/smoke/SBOM/scan do candidato R2 — pendente após erro de I/O no content
-  store local; os digests anteriores estão stale e não autorizam release
-- ⏳ Re-review, QA e security audit independentes — pendentes
-- ⛔ Tag `v1.0.0` — não criada; bloqueada até os gates independentes e changelog final
+- ✅ Correção da rodada 3 — manifesto de filesystem completo e testes negativos
+- ✅ Rebuild, smoke, SBOM e scan — aprovados em daemon isolado, preservando os 13
+  containers preexistentes de outros projetos
+- ✅ QA independente — aprovado sem ressalvas
+- ✅ Security audit OWASP A01–A10 — aprovado sem blocker ou warning
+- ✅ Release local `v1.0.0` — changelog, commit final, artefatos exatos e tag anotada
 
 ### Evidências do Stack Agent
 
@@ -403,8 +405,20 @@ Sprint 5 aprovada em Code Review e QA, apta para commit e integração em `main`
   metadados ainda estritos. A suíte negativa cobre conteúdo no mesmo path, symlink,
   tipo, modo, owner, extra, missing, traversal e duplicata sem acessar Docker.
 
+### Validação final
+
+- O candidato foi reconstruído em um profile Colima isolado; nenhum container ou
+  volume dos demais projetos foi parado, reiniciado ou removido.
+- `make check`, `make integration`, `make adversarial`, `make quickstart`,
+  `make rollback-rehearsal`, `make container-smoke` e `make secret-scan` passaram.
+- O smoke confirmou as quatro imagens hardened e seus manifestos canônicos. O gate de
+  supply chain gerou oito SBOMs e encontrou zero High/Critical e zero segredo.
+- A API pública recebeu headers de segurança em todas as respostas; HSTS permanece
+  condicionado ao profile produtivo com TLS terminado no ingress.
+- Relatórios finais: `docs/webhook-delivery-engine-qa-sprint-6.md` e
+  `docs/webhook-delivery-engine-security-audit.md`.
+
 ### Próximo gate
 
-Executar Code Review, QA e security audit independentes. Somente depois da aprovação e
-do `CHANGELOG.md` final o mantenedor poderá criar `v1.0.0` no commit e nos digests
-exatamente escaneados.
+MVP concluído e release local `v1.0.0` validada. Publicação em registry ou repositório
+remoto permanece uma ação separada, pois este checkout não possui remote configurado.
