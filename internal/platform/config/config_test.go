@@ -68,6 +68,35 @@ func TestLoadAcceptsLocalAndTestProfiles(t *testing.T) {
 	}
 }
 
+func TestHTTPDestinationFlagIsLoadedLocallyAndRejectedInProduction(t *testing.T) {
+	local, err := Load(LoadOptions{
+		Service: ServiceWorker,
+		LookupEnv: mapLookup(map[string]string{
+			"WDE_PROFILE":                 "local",
+			"WDE_DATABASE_URL":            "postgres://test:test@localhost:5432/wde?sslmode=disable",
+			"WDE_ALLOW_HTTP_DESTINATIONS": "true",
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !local.AllowHTTPDestinations {
+		t.Fatal("local HTTP destination flag was not loaded")
+	}
+
+	_, err = Load(LoadOptions{
+		Service: ServiceWorker,
+		LookupEnv: mapLookup(map[string]string{
+			"WDE_PROFILE":                 "production",
+			"WDE_DATABASE_URL":            "postgres://worker@example.com:5432/wde?sslmode=verify-full",
+			"WDE_ALLOW_HTTP_DESTINATIONS": "true",
+		}),
+	})
+	if err == nil || !strings.Contains(err.Error(), "WDE_ALLOW_HTTP_DESTINATIONS") {
+		t.Fatalf("Load() error = %v, want production HTTP rejection", err)
+	}
+}
+
 func TestProductionRejectsUnsafeDatabaseWithoutLeakingIt(t *testing.T) {
 	const databaseURL = "postgres://sensitive-user:top-secret@db.example:5432/wde?sslmode=disable"
 	_, err := Load(LoadOptions{
@@ -110,8 +139,9 @@ func TestProductionAPIAcceptsDistinctVersionedSecretFiles(t *testing.T) {
 		"WDE_INGRESS_TLS_TERMINATED":  "true",
 		"WDE_AUTH_PEPPER_FILE":        writePepper(t, dir, "auth.pepper", 1),
 		"WDE_IDEMPOTENCY_PEPPER_FILE": writePepper(t, dir, "idempotency.pepper", 2),
-		"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload.json", 3),
-		"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing.json", 4),
+		"WDE_FINGERPRINT_PEPPER_FILE": writePepper(t, dir, "fingerprint.pepper", 3),
+		"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload.json", 4),
+		"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing.json", 5),
 	}
 
 	// Act
@@ -142,8 +172,9 @@ func TestProductionRejectsReusedCryptographicMaterial(t *testing.T) {
 					"WDE_INGRESS_TLS_TERMINATED":  "true",
 					"WDE_AUTH_PEPPER_FILE":        sharedPepper,
 					"WDE_IDEMPOTENCY_PEPPER_FILE": sharedPepper,
-					"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload.json", 2),
-					"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing.json", 3),
+					"WDE_FINGERPRINT_PEPPER_FILE": writePepper(t, dir, "fingerprint.pepper", 2),
+					"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload.json", 3),
+					"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing.json", 4),
 				}
 			},
 			wantInError: "distinct key material",
@@ -253,8 +284,9 @@ func TestProductionRejectsShortPepper(t *testing.T) {
 			"WDE_INGRESS_TLS_TERMINATED":  "true",
 			"WDE_AUTH_PEPPER_FILE":        authPepper,
 			"WDE_IDEMPOTENCY_PEPPER_FILE": writePepper(t, dir, "idempotency.pepper", 2),
-			"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload.json", 3),
-			"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing.json", 4),
+			"WDE_FINGERPRINT_PEPPER_FILE": writePepper(t, dir, "fingerprint.pepper", 3),
+			"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload.json", 4),
+			"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing.json", 5),
 		}),
 	})
 	if err == nil || !strings.Contains(err.Error(), "32 bytes") {

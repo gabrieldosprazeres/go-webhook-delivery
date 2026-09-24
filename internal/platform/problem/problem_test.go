@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -50,5 +51,20 @@ func TestWithRequestIDFailsClosedWhenRandomnessFails(t *testing.T) {
 
 	if got := response.Header().Get("X-Request-ID"); got != "unavailable" {
 		t.Fatalf("X-Request-ID = %q, want unavailable", got)
+	}
+}
+
+func TestRecoverSanitizesPanic(t *testing.T) {
+	handler := WithRequestID(Recover(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("sensitive-token")
+	})))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d", response.Code)
+	}
+	if strings.Contains(response.Body.String(), "sensitive-token") {
+		t.Fatal("panic value leaked")
 	}
 }

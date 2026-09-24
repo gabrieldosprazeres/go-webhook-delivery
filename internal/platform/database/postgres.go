@@ -12,9 +12,10 @@ import (
 
 const (
 	// SchemaVersion is the only migration version this revision of the binaries accepts.
-	SchemaVersion = 1
+	SchemaVersion = 2
 	RoleAPI       = "wde_api"
 	RoleWorker    = "wde_worker"
+	RoleAdmin     = "wde_admin"
 )
 
 var (
