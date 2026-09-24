@@ -94,6 +94,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: 1.27.1
+          cache: true
       - name: Validate Compose
         run: docker compose --profile demo config --quiet
       - name: Build every image target
@@ -104,10 +109,17 @@ jobs:
         run: |
           docker compose --profile core up --detach --wait postgres
           docker compose --profile core run --rm migrate
-          docker compose --profile core up --detach --no-deps api worker
+      - name: Run real-role integration and end-to-end tests
+        env:
+          WDE_TEST_API_DATABASE_URL: postgres://wde_api:api-local-only@127.0.0.1:55432/wde?sslmode=disable
+          WDE_TEST_WORKER_DATABASE_URL: postgres://wde_worker:worker-local-only@127.0.0.1:55432/wde?sslmode=disable
+          WDE_TEST_ADMIN_DATABASE_URL: postgres://wde_admin:admin-local-only@127.0.0.1:55432/wde?sslmode=disable
+        run: make integration
+      - name: Start runtime services
+        run: docker compose --profile core up --detach --no-deps api worker
       - name: Verify migration, roles and readiness
         run: |
-          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT wde.schema_version()")" = "1"
+          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT wde.schema_version()")" = "2"
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_api','wde.schema_metadata','SELECT')")" = "f"
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_worker','wde.schema_metadata','SELECT')")" = "f"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/healthz)" = "404"

@@ -2,7 +2,7 @@
 
 GO ?= go
 
-.PHONY: help fmt fmt-check tidy-check test race vet staticcheck vuln build check \
+.PHONY: help fmt fmt-check tidy-check test integration race vet staticcheck vuln build check \
 	migration-validate migrate-up migrate-status compose-config compose-up compose-demo compose-down
 
 help: ## Lista os comandos disponiveis.
@@ -19,6 +19,11 @@ tidy-check: ## Confere se go.mod e go.sum estao organizados, sem alterar arquivo
 
 test: ## Executa os testes unitarios.
 	$(GO) test ./...
+
+integration: ## Executa schema, concorrencia e E2E; exige as tres WDE_TEST_*_DATABASE_URL.
+	@test -n "$$WDE_TEST_API_DATABASE_URL" -a -n "$$WDE_TEST_WORKER_DATABASE_URL" -a -n "$$WDE_TEST_ADMIN_DATABASE_URL"
+	$(GO) test ./test/integration -run '^TestCredentialBootstrapIsSerializedAndRevocable$$' -count=1 -v
+	$(GO) test ./test/integration -run '^(TestTenantContextAndAppendOnlyACL|TestConcurrentIdempotency|TestClaimWithoutCompleteSnapshotDoesNotMutateDelivery|TestEndpointEventWorkerChaosLabSucceeded)$$' -count=1 -v
 
 race: ## Executa todos os testes com o race detector.
 	$(GO) test -race ./...
@@ -61,4 +66,4 @@ compose-demo: ## Sobe o core e o Chaos Lab local.
 compose-down: ## Encerra os containers preservando o volume PostgreSQL.
 	docker compose --profile demo down
 
-check: fmt-check tidy-check test race vet staticcheck vuln migration-validate build ## Executa todos os gates locais da Sprint 0.
+check: fmt-check tidy-check test race vet staticcheck vuln migration-validate build ## Executa todos os gates locais da implementacao atual.

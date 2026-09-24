@@ -9,9 +9,9 @@ import (
 	"os"
 	"time"
 
+	chaos "github.com/gabrieldosprazeres/go-webhook-delivery/internal/chaoslab"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/logging"
-	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/problem"
 	appruntime "github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/runtime"
 )
 
@@ -59,13 +59,5 @@ func run(parent context.Context, args []string) error {
 }
 
 func routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("{\"status\":\"ok\"}\n"))
-	})
-	mux.Handle("/", problem.NotFound())
-	return problem.WithRequestID(mux)
+	return chaos.Handler()
 }

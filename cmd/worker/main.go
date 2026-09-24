@@ -8,11 +8,15 @@ import (
 	"os"
 	"time"
 
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/delivery"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/cryptobox"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/database"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/logging"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/operational"
 	appruntime "github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/runtime"
+	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 func main() {
@@ -42,6 +46,15 @@ func run(parent context.Context, args []string) error {
 		return err
 	}
 	defer pool.Close()
+	materials, err := cryptobox.Load(cfg.Profile, cfg.Secrets)
+	if err != nil {
+		return err
+	}
+	workerID, err := uuid.NewV7()
+	if err != nil {
+		return err
+	}
+	runner := delivery.NewRunner(delivery.NewPostgresStore(pool), materials, cfg.Profile, cfg.AllowHTTPDestinations, workerID)
 	listener, err := net.Listen("tcp", cfg.OperationalAddr)
 	if err != nil {
 		return err
@@ -64,7 +77,10 @@ func run(parent context.Context, args []string) error {
 	}
 
 	logger.InfoContext(ctx, "service started", slog.String("component", "scheduler"))
-	if err := appruntime.Serve(ctx, server, listener, cfg.ShutdownTimeout); err != nil {
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error { return appruntime.Serve(groupCtx, server, listener, cfg.ShutdownTimeout) })
+	group.Go(func() error { return runner.Run(groupCtx) })
+	if err := group.Wait(); err != nil {
 		return err
 	}
 	logger.Info("service stopped", slog.String("component", "scheduler"))

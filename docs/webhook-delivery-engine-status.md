@@ -1,7 +1,7 @@
 # Status: Webhook Delivery Engine
 
-**Atualizado em:** 2026-09-23  
-**Branch:** `feature/sprint-0-foundation`
+**Atualizado em:** 2026-09-24
+**Branch:** `feature/sprint-1-vertical-slice`
 
 ## Planejamento
 
@@ -86,4 +86,44 @@
 
 ## Próximo gate
 
-Sprint 0 concluida. Proximo passo: iniciar a Sprint 1 pelo schema minimo tenant-safe (`S1-01`) e manter as revisoes de seguranca previstas para DDL, grants e funcoes privilegiadas.
+Sprint 0 concluida, revisada, aprovada em QA e integrada a `main` no commit `63feb8f`.
+
+## Sprint 1 — Primeiro corte vertical
+
+- S1-01 — Schema mínimo tenant-safe — implementada
+- S1-02 — Bootstrap local de workspace e API key — implementada
+- S1-03 — Criar e consultar endpoint — implementada
+- S1-04 — Publicar evento idempotente — implementada
+- S1-05 — Worker de concorrência 1 — implementada
+- S1-06 — HMAC v1 — implementada
+- S1-07 — Chaos Lab e consulta de delivery — implementada
+- ✅ Code Review — aprovado no ciclo 3, sem blockers ou warnings
+- ✅ QA — aprovado, 71/71 resultados automatizados e fluxo E2E real sem falhas
+
+O corte vertical foi validado em PostgreSQL 17 com migration `up/down/up`, roles reais, RLS/ACLs, bootstrap/revogação e E2E `endpoint → event → worker → Chaos Lab → succeeded`. A Sprint somente será marcada concluída depois de Code Review e QA independentes.
+
+### Remediações do Code Review
+
+- CI alinhada ao `schema_version=2` e com integração real usando roles PostgreSQL e E2E completo.
+- Autenticação e RLS recusam workspaces `suspended`/`deleting`.
+- Bootstrap serializado por advisory lock, com saída única segura, `fsync` e limpeza caso o commit falhe.
+- Claim valida o snapshot completo antes de alterar a delivery ou criar attempt.
+- `WDE_ALLOW_HTTP_DESTINATIONS` controla efetivamente cadastro e envio HTTP loopback.
+- Contrato OpenAPI e testes negativos ampliados; reavaliação de Code Review e QA continua pendente.
+- `current_workspace_id()` revoga `PUBLIC EXECUTE` explicitamente; teste real confirma execução somente por `wde_api`.
+- API/CLI, endpoints, criptografia, configuração e entrega HTTP foram decompostos em unidades coesas; nenhum arquivo Go de produção excede 200 linhas.
+
+### QA da Sprint 1
+
+**Veredicto:** ✅ Aprovado em 2026-09-24.
+
+- `make check` passou com testes, race detector, vet, Staticcheck, `govulncheck`, validação de migrations e build dos três binários.
+- PostgreSQL 17.11 real passou por migration `up/down/up`, matriz de roles/ACLs, RLS fail-closed e proteção append-only.
+- Bootstrap concorrente e pelo binário confirmou emissão única, arquivo `0600`, rollback seguro e revogação.
+- Cem publicações concorrentes produziram exatamente um evento e uma delivery.
+- O E2E validou create/get de endpoint, escopos, isolamento cross-tenant, 409, 413, worker, HMAC, Chaos Lab, estado `succeeded` e timeline sem material sensível.
+- Relatório completo: `docs/webhook-delivery-engine-qa-sprint-1.md`.
+
+## Próximo gate
+
+Sprint 1 concluída, revisada e aprovada em QA. Próximo passo: integrar a branch em `main` e iniciar a Sprint 2 — Confiabilidade e concorrência.

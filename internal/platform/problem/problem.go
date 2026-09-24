@@ -43,6 +43,18 @@ func NotFound() http.Handler {
 	})
 }
 
+// Recover converts an unexpected handler panic into a sanitized response.
+func Recover(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recover() != nil {
+				Write(w, r, http.StatusInternalServerError, "internal_error", "Internal server error")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
 // WithRequestID generates a server-owned request identifier for every request.
 func WithRequestID(next http.Handler) http.Handler {
 	return withRequestIDGenerator(next, newRequestID)

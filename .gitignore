@@ -5,6 +5,7 @@
 *.pem
 *.key
 secrets/
+local-credentials.json
 
 # Go build and test artifacts
 /bin/

@@ -2,7 +2,7 @@
 
 Servico de entrega confiavel de webhooks escrito em Go. O projeto demonstra ingestao idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento multi-tenant, assinatura HMAC, defesa SSRF e operacao observavel.
 
-> Estado atual: Sprint 0. A fundacao executavel esta pronta; endpoints de negocio, persistencia do dominio e entrega entram nas proximas sprints. O projeto nunca promete `exactly-once`.
+> Estado atual: Sprint 1 implementada. O primeiro corte vertical cria endpoints, publica eventos idempotentes, assina e entrega webhooks, e expoe a timeline da delivery. O projeto nunca promete `exactly-once`.
 
 ## Stack
 
@@ -45,6 +45,18 @@ curl -i http://127.0.0.1:8081/healthz
 
 Todos os ports publicados pelo Compose fazem bind em loopback. As credenciais presentes em `.env.example` sao exclusivamente locais e descartaveis.
 
+Antes da primeira chamada, crie o workspace e a API key com o comando one-shot (ele nao inicia listener e revela a chave uma unica vez):
+
+```bash
+WDE_PROFILE=local \
+WDE_ADMIN_DATABASE_URL='postgres://wde_admin:admin-local-only@127.0.0.1:5432/wde?sslmode=disable' \
+WDE_DATABASE_URL='postgres://wde_api:api-local-only@127.0.0.1:5432/wde?sslmode=disable' \
+go run ./cmd/api credentials bootstrap --name 'Demo local' \
+  --output-file='./local-credentials.json'
+```
+
+O arquivo criado contém `api_key`. O fluxo HTTP inicial esta documentado em [`api/openapi.yaml`](api/openapi.yaml). Endpoints HTTP sao aceitos apenas nos profiles locais/de teste e apenas em loopback; a criacao permanece fechada em producao ate a defesa SSRF completa da Sprint 4.
+
 ## Execucao sem containers
 
 ```bash
@@ -66,11 +78,13 @@ Principais variaveis:
 |---|---|
 | `WDE_PROFILE` | `local`, `test` ou `production` |
 | `WDE_DATABASE_URL` | DSN da role especifica do processo |
+| `WDE_ADMIN_DATABASE_URL` | DSN usada exclusivamente pelos comandos one-shot de credenciais |
 | `WDE_DATABASE_TIMEOUT` | prazo para startup/readiness do banco; default `5s` |
 | `WDE_API_HTTP_ADDR` | listener da API; default `:8080` |
 | `WDE_API_OPERATIONAL_ADDR` | probes da API; default `127.0.0.1:9090` |
 | `WDE_WORKER_OPERATIONAL_ADDR` | probes do worker; default `127.0.0.1:9091` |
 | `WDE_CHAOSLAB_HTTP_ADDR` | listener local; default `127.0.0.1:8081` |
+| `WDE_ALLOW_HTTP_DESTINATIONS` | habilita explicitamente destinos HTTP loopback fora de produção |
 | `WDE_SHUTDOWN_TIMEOUT` | prazo de shutdown; default `30s` |
 | `WDE_LOG_LEVEL` | `debug`, `info`, `warn` ou `error` |
 | `WDE_INGRESS_TLS_TERMINATED` | declaracao obrigatoria para API em producao |
@@ -90,7 +104,7 @@ Peppers produtivos usam uma linha `v1:<base64url-sem-padding>` com exatamente 32
 }
 ```
 
-Peppers de autenticacao/idempotencia e keyrings de payload/assinatura devem ter materiais distintos. Arquivos vazios, formatos desconhecidos, chaves curtas, versoes duplicadas e JSON com campos desconhecidos impedem o startup. A API e o worker tambem validam conexao, role PostgreSQL e versao da migration.
+Peppers de autenticacao, idempotencia e fingerprint, assim como os keyrings de payload/assinatura, devem ter materiais distintos. Arquivos vazios, formatos desconhecidos, chaves curtas, versoes duplicadas e JSON com campos desconhecidos impedem o startup. A API e o worker tambem validam conexao, role PostgreSQL e versao da migration.
 
 `/healthz` e `/readyz` existem somente nos listeners operacionais: liveness indica processo vivo; readiness valida banco, role e schema a cada chamada e retorna `503` quando algum deles deixa de ser compativel ou acessivel. A superficie publica da API responde `404` para essas rotas. Os defaults operacionais e do Chaos Lab usam loopback; o Compose faz bind interno para containers e publica as portas somente em `127.0.0.1`.
 
@@ -120,10 +134,15 @@ make migrate-up
 
 ```text
 cmd/                 composition roots de api, worker e chaoslab
-internal/platform/   configuracao, logging, problem details e lifecycle
+internal/auth/       API keys, principal e bootstrap/revogacao
+internal/endpoint/   destinos, subscriptions e segredo de assinatura
+internal/event/      ingresso idempotente e fan-out transacional
+internal/delivery/   claim, envio HTTP e timeline
+internal/signing/    protocolo HMAC v1
+internal/platform/   configuracao, criptografia, logging e lifecycle
 db/migrations/       migrations versionadas e fail-closed
 deployments/         Dockerfiles e bootstrap local do PostgreSQL
-api/                 contrato OpenAPI a partir da Sprint 1
+api/                 contrato OpenAPI
 test/                suites de integracao e adversariais
 docs/                PRD, arquitetura, ADRs, seguranca, backlog e status
 ```
