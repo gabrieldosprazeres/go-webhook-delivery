@@ -15,6 +15,7 @@ import (
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/logging"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/operational"
 	appruntime "github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/runtime"
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/retention"
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 )
@@ -64,6 +65,8 @@ func run(parent context.Context, args []string) error {
 			Retry: delivery.RetryPolicy{Base: cfg.WorkerRetryBase, Cap: cfg.WorkerRetryCap,
 				Jitter: delivery.DefaultRetryPolicy().Jitter},
 		})
+	retentionRunner := retention.NewRunner(retention.NewPostgresStore(pool), time.Hour).
+		WithObserver(retentionObserver(ctx, logger))
 	listener, err := net.Listen("tcp", cfg.OperationalAddr)
 	if err != nil {
 		return err
@@ -71,6 +74,9 @@ func run(parent context.Context, args []string) error {
 	readiness := func(requestCtx context.Context) error {
 		if ctx.Err() != nil {
 			return database.ErrUnavailable
+		}
+		if err := retentionRunner.Ready(); err != nil {
+			return err
 		}
 		checkCtx, cancel := context.WithTimeout(requestCtx, cfg.DatabaseTimeout)
 		defer cancel()
@@ -89,9 +95,34 @@ func run(parent context.Context, args []string) error {
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error { return appruntime.Serve(groupCtx, server, listener, cfg.ShutdownTimeout) })
 	group.Go(func() error { return runner.Run(groupCtx) })
+	group.Go(func() error { return retentionRunner.Run(groupCtx) })
 	if err := group.Wait(); err != nil {
 		return err
 	}
 	logger.Info("service stopped", slog.String("component", "scheduler"))
 	return nil
+}
+
+func retentionObserver(ctx context.Context, logger *slog.Logger) func(retention.Report) {
+	return func(report retention.Report) {
+		level := slog.LevelInfo
+		if report.Degraded {
+			level = slog.LevelWarn
+		}
+		logger.LogAttrs(ctx, level, "retention maintenance completed",
+			slog.Int64("backlog", report.Backlog),
+			slog.Duration("oldest_age", report.OldestAge),
+			slog.Duration("duration", report.Duration),
+			slog.Int("batches", report.Batches),
+			slog.Bool("degraded", report.Degraded),
+			slog.Group("deleted",
+				slog.Int64("payloads", report.Counts.Payloads),
+				slog.Int64("secrets", report.Counts.Secrets),
+				slog.Int64("attempts", report.Counts.Attempts),
+				slog.Int64("deliveries", report.Counts.Deliveries),
+				slog.Int64("events", report.Counts.Events),
+				slog.Int64("audits", report.Counts.Audits),
+				slog.Int64("buckets", report.Counts.Buckets),
+				slog.Int64("workspace_rows", report.Counts.WorkspaceRows)))
+	}
 }

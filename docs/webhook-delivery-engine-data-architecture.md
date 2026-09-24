@@ -123,7 +123,7 @@ A role da API não recebe `SELECT` direto nessas tabelas antes da autenticação
 |---|---|---|
 | `id`, `workspace_id`, `endpoint_id` | `uuid` | PK e FK composta |
 | `key_id` | `text` | identificador público único por endpoint |
-| `state` | `text` | `active`, `retiring`, `retired`, `purged` |
+| `state` | `text` | `active`, `retiring`, `purged` |
 | `cipher_format_version` | `smallint` | versão conhecida e positiva |
 | `secret_ciphertext` | `bytea` | nullable somente quando `purged`, mínimo 16 bytes |
 | `secret_nonce` | `bytea` | 12 bytes enquanto ciphertext existir |
@@ -131,6 +131,8 @@ A role da API não recebe `SELECT` direto nessas tabelas antes da autenticação
 | `valid_from`, `retire_at`, `purged_at`, `created_at` | `timestamptz` | coerência por `CHECK` |
 
 Índice unique parcial garante uma única versão `active` por endpoint. Outro índice cobre versões `retiring` ainda válidas. Rotação bloqueia a linha do endpoint, promove a nova versão e define expiração da anterior na mesma transação.
+
+`secret_rotation_commands` preserva hash da chave idempotente, fingerprint, versão de segredo e instante de criação até `metadata_retention_days`. O purge do segredo zera somente o envelope referenciado e mantém o comando. Durante essa janela, retry com fingerprint divergente retorna conflito; retry idêntico de resultado já purgado retorna `rotation_result_expired`, sem criar versão, comando ou auditoria. Somente o purge de metadata remove o comando.
 
 ### 4.6 `events`
 
@@ -230,7 +232,7 @@ PK `(dimension_hash, operation, window_started_at)`, com `workspace_id`/`api_key
 
 ### 4.12 `maintenance_jobs`
 
-Armazena jobs idempotentes de `purge_payload`, `purge_workspace`, `reencrypt_payload`, `reencrypt_secret` e `reconcile_tombstone`: ID, workspace nullable, tipo, chave de deduplicação, status, agenda, lease/fencing, tentativas e timestamps. Usa as mesmas garantias de claim, mas nunca compartilha estado com delivery.
+Armazena jobs idempotentes de `purge_payload`, `purge_workspace`, `reencrypt_payload`, `reencrypt_secret` e `reconcile_tombstone`: ID, workspace nullable, tipo, chave de deduplicação, status, checkpoint, linhas processadas, agenda, lease/fencing, tentativas e timestamps. Cada chamada de purge de workspace avança no máximo um batch de uma etapa e valida owner/token/lease antes de persistir progresso.
 
 ### 4.13 Contrato exato de relações
 
@@ -423,11 +425,11 @@ Regras globais:
 
 - Payload: default 30, máximo 90 dias; purge zera ciphertext/nonce/key version e define `payload_purged_at`.
 - Metadata event/delivery/attempt: default 90, máximo 180 dias, removida em batches após payload e sem referências ativas.
-- Auditoria: default 365, máximo 730 dias.
+- Auditoria: default global 365, configurável até 730 dias em `restore_control`, que sobrevive ao workspace purgado.
 - Rate-limit buckets: 24 h, máximo 7 dias.
 - Tombstones e backups seguem 35 dias mínimos para reconciliação definida na arquitetura.
 
-Jobs usam índice por data de expiração, `FOR UPDATE SKIP LOCKED`, batch pequeno e statement timeout. Purge é idempotente. Replay verifica payload antes de alterar estado.
+Jobs usam índice por data de expiração, `FOR UPDATE SKIP LOCKED`, batch obrigatório entre 1 e 1.000 e statement timeout. Cada ciclo drena enquanto um sweep reporta progresso e só calcula backlog exato quando o sweep estabiliza; assim o volume de batches não multiplica scans globais. O log estruturado contém somente contagem, duração, backlog imediatamente acionável e sua idade atual agregados; backlog zero sempre publica idade zero. Pais bloqueados por filhos ainda vivos não entram no backlog até serem deletáveis. Purge é idempotente. Replay verifica payload antes de alterar estado.
 
 Antes de purgar um payload, o job bloqueia o event e suas deliveries. Deliveries ainda ativas são aguardadas somente até o prazo documentado; depois, na mesma transação, o job incrementa o fencing token, encerra attempt `started` como `abandoned`, remove lease e terminaliza a delivery como `failed_permanent` com categoria `payload_expired`. Só então ciphertext, formato, nonce e versão são zerados juntos. Isso invalida workers atrasados e impede replay de conteúdo inexistente.
 
@@ -480,6 +482,8 @@ Fixtures ficam fora da cadeia produtiva, em comando/pasta de teste separado com 
 Na fatia materializada da Sprint 2, o schema lógico v3 foi dividido em quatro migrations Goose auditáveis: `000003_reliability_schema`, `000004_reliability_claim_transition`, `000005_reliability_claim_entrypoint` e `000006_reliability_finalize`. As versões físicas 3–5 adicionam apenas estruturas e funções v3 internas, sem retirar entrypoints ou grants v2. A `000006` troca claim, finalize, grants e `wde.schema_version=3` na mesma transação. No `down`, a própria `000006` restaura contratos v2 e `schema_version=2` atomicamente antes que migrations anteriores removam os helpers. Assim, cada boundary anuncia somente um contrato completo; o runtime v3 recusa readiness nas versões lógicas v2.
 
 Na Sprint 3, o schema lógico v4 segue o mesmo padrão: `000007_operations_schema` cria tabelas/RLS sem expor entrypoints; `000008_quota_audit_functions` e `000009_replay_function` criam funções de staging sem grants para roles login; somente `000010_operations_finalize` publica os nomes, grants mínimos e `schema_version=4` na mesma transação. O downgrade da `000010` revoga os entrypoints, restaura os nomes de staging e anuncia v3 antes da remoção dos objetos. O runtime v4 recusa todos os boundaries físicos 6–9.
+
+Na Sprint 4, as migrations `000011`–`000018` materializam envelopes v2/all-or-none, comandos de rotação, retenção por categoria, backlog agregado, purge de workspace checkpointado, tombstones, quarentena e claim com segredo retiring, mas mantêm o schema lógico v4 e nenhum novo entrypoint executável por role login. Somente `000019_data_security_finalize` troca nomes/grants e publica `schema_version=5`. O runtime v5 recusa os boundaries 10–18; downgrade também falha fechado se já existir dado cifrado v2 ou evidência operacional S4 que um runtime v4 não saiba interpretar.
 
 ## 12. Testes obrigatórios do schema
 

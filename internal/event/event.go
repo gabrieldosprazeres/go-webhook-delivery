@@ -77,7 +77,7 @@ func (s *Service) Publish(ctx context.Context, workspaceID uuid.UUID, idempotenc
 	fingerprint := keyed(s.materials.FingerprintPepper, fingerprintInput)
 	clear(fingerprintInput)
 	clear(canonical)
-	aad := cryptobox.AAD("1", workspaceID.String(), id.String(), eventType)
+	aad := cryptobox.AAD("2", workspaceID.String(), "event_payload", id.String(), eventType)
 	envelope, err := cryptobox.Seal(s.materials.Payload, raw, aad)
 	if err != nil {
 		return PublishResult{}, err

@@ -27,7 +27,7 @@ func TestPublishEncryptsRawPayload(t *testing.T) {
 	if result.EventID == uuid.Nil {
 		t.Fatal("missing id")
 	}
-	plain, err := cryptobox.Open(mats.Payload, store.record.Payload, cryptobox.AAD("1", store.record.WorkspaceID.String(), store.record.ID.String(), store.record.EventType))
+	plain, err := cryptobox.Open(mats.Payload, store.record.Payload, cryptobox.AAD("2", store.record.WorkspaceID.String(), "event_payload", store.record.ID.String(), store.record.EventType))
 	if err != nil || string(plain) != string(raw) {
 		t.Fatalf("plain=%s err=%v", plain, err)
 	}

@@ -21,6 +21,12 @@ func run(parent context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "credentials" {
 		return runCredentials(parent, args[1:])
 	}
+	if len(args) > 0 && args[0] == "restore" {
+		return runRestore(parent, args[1:])
+	}
+	if len(args) > 0 && args[0] == "workspace" {
+		return runWorkspace(parent, args[1:])
+	}
 	cfg, err := config.Load(config.LoadOptions{Service: config.ServiceAPI, Args: args})
 	if err != nil {
 		return err

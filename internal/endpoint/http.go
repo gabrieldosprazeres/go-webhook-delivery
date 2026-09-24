@@ -64,6 +64,42 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, value)
 }
 
+func (h *Handler) Rotate(w http.ResponseWriter, r *http.Request) {
+	endpointID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		problem.Write(w, r, http.StatusNotFound, "not_found", "Resource not found")
+		return
+	}
+	if r.Header.Get("Content-Type") != "application/json" {
+		problem.Write(w, r, http.StatusUnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json")
+		return
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
+	decoder.DisallowUnknownFields()
+	var input RotationInput
+	if err := decoder.Decode(&input); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		problem.Write(w, r, http.StatusBadRequest, "invalid_request", "Invalid request")
+		return
+	}
+	principal, _ := auth.PrincipalFrom(r.Context())
+	result, err := h.service.Rotate(r.Context(), principal.WorkspaceID, endpointID,
+		principal.APIKeyID.String(), problem.RequestID(r.Context()), r.Header.Get("Idempotency-Key"), input)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		problem.Write(w, r, http.StatusNotFound, "not_found", "Resource not found")
+	case errors.Is(err, ErrRotationConflict), errors.Is(err, ErrRotationInProgress):
+		problem.Write(w, r, http.StatusConflict, "rotation_conflict", "Secret rotation conflict")
+	case errors.Is(err, ErrRotationExpired):
+		problem.Write(w, r, http.StatusConflict, "rotation_result_expired", "Secret rotation result expired")
+	case errors.Is(err, ErrInvalid):
+		problem.Write(w, r, http.StatusUnprocessableEntity, "invalid_rotation", "Invalid secret rotation")
+	case err != nil:
+		problem.Write(w, r, http.StatusInternalServerError, "internal_error", "Internal server error")
+	default:
+		writeJSON(w, http.StatusAccepted, result)
+	}
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

@@ -9,9 +9,12 @@ import (
 )
 
 var (
-	ErrInvalid     = errors.New("endpoint: invalid input")
-	ErrNotFound    = errors.New("endpoint: not found")
-	ErrUnavailable = errors.New("endpoint: creation unavailable until outbound SSRF controls are enabled")
+	ErrInvalid            = errors.New("endpoint: invalid input")
+	ErrNotFound           = errors.New("endpoint: not found")
+	ErrUnavailable        = errors.New("endpoint: creation unavailable until outbound SSRF controls are enabled")
+	ErrRotationConflict   = errors.New("endpoint: rotation idempotency conflict")
+	ErrRotationInProgress = errors.New("endpoint: rotation already in progress")
+	ErrRotationExpired    = errors.New("endpoint: idempotent rotation result expired")
 )
 
 type CreateInput struct {
@@ -57,9 +60,35 @@ type StoredRecord struct {
 type Store interface {
 	Create(context.Context, NewRecord) error
 	Get(context.Context, uuid.UUID, uuid.UUID) (StoredRecord, error)
+	Rotate(context.Context, RotationRecord) (RotationStored, error)
 }
 
 type destination struct {
 	scheme, host, path string
 	port               int
+}
+
+type RotationInput struct {
+	OverlapSeconds int `json:"overlap_seconds"`
+}
+
+type RotationResult struct {
+	EndpointID uuid.UUID     `json:"endpoint_id"`
+	Secret     SigningSecret `json:"signing_secret"`
+	Duplicate  bool          `json:"duplicate"`
+}
+
+type RotationRecord struct {
+	CommandID, AuditID, WorkspaceID, EndpointID, SecretVersionID uuid.UUID
+	KeyID, ActorID, RequestID                                    string
+	IdempotencyHash, Fingerprint                                 []byte
+	OverlapSeconds                                               int
+	Secret                                                       cryptobox.Envelope
+}
+
+type RotationStored struct {
+	SecretVersionID uuid.UUID
+	KeyID           string
+	Secret          cryptobox.Envelope
+	Duplicate       bool
 }

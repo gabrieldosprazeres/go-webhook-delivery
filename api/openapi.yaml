@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Webhook Delivery Engine API
-  version: 0.3.0
+  version: 0.4.0
   description: Reliable at-least-once webhook delivery. Consumers deduplicate using WDE-Delivery-ID.
 servers:
   - url: http://localhost:8080
@@ -41,6 +41,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Endpoint'
+        '429':
+          $ref: '#/components/responses/QuotaExceeded'
+        default:
+          $ref: '#/components/responses/Problem'
+  /v1/endpoints/{id}/secret-rotations:
+    post:
+      operationId: rotateEndpointSecret
+      summary: Rotate the HMAC secret with a bounded dual-signing overlap
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateSecretRequest'
+      responses:
+        '202':
+          description: Rotation accepted; the new secret is revealed in this idempotent response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotateSecretResult'
+        '409':
+          description: Rotation conflict, overlap in progress, or idempotent result whose secret expired
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
         '429':
           $ref: '#/components/responses/QuotaExceeded'
         default:
@@ -220,6 +255,24 @@ components:
           properties:
             key_id: {type: string}
             secret: {type: string, description: Base64url secret shown only in this response}
+    RotateSecretRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        overlap_seconds: {type: integer, minimum: 3600, maximum: 604800, default: 86400}
+    RotateSecretResult:
+      type: object
+      additionalProperties: false
+      required: [endpoint_id, signing_secret, duplicate]
+      properties:
+        endpoint_id: {type: string, format: uuid}
+        signing_secret:
+          type: object
+          required: [key_id, secret]
+          properties:
+            key_id: {type: string}
+            secret: {type: string, description: Base64url secret returned only by this idempotent command}
+        duplicate: {type: boolean}
     Delivery:
       type: object
       additionalProperties: false

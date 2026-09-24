@@ -31,6 +31,13 @@ type Claim struct {
 	KeyID                                        string
 	SecretVersionID                              uuid.UUID
 	Secret                                       cryptobox.Envelope
+	Retiring                                     *ClaimSecret
+}
+
+type ClaimSecret struct {
+	KeyID     string
+	VersionID uuid.UUID
+	Envelope  cryptobox.Envelope
 }
 
 type Disposition string

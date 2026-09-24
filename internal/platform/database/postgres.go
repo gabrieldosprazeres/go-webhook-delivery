@@ -12,7 +12,7 @@ import (
 
 const (
 	// SchemaVersion is the only migration version this revision of the binaries accepts.
-	SchemaVersion = 4
+	SchemaVersion = 5
 	RoleAPI       = "wde_api"
 	RoleWorker    = "wde_worker"
 	RoleAdmin     = "wde_admin"
@@ -66,6 +66,10 @@ func Check(ctx context.Context, checker healthChecker, expectedRole string) erro
 	}
 	if schemaVersion != SchemaVersion {
 		return ErrIncompatibleSchema
+	}
+	var ready bool
+	if err := checker.QueryRow(ctx, `SELECT wde.runtime_ready()`).Scan(&ready); err != nil || !ready {
+		return ErrUnavailable
 	}
 	return nil
 }

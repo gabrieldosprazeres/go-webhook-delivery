@@ -10,7 +10,10 @@ import (
 	"fmt"
 )
 
-const FormatVersion int16 = 1
+const (
+	LegacyFormatVersion int16 = 1
+	FormatVersion       int16 = 2
+)
 
 type Envelope struct {
 	FormatVersion int16
@@ -32,8 +35,8 @@ func Seal(keyring Keyring, plaintext, aad []byte) (Envelope, error) {
 }
 
 func Open(keyring Keyring, envelope Envelope, aad []byte) ([]byte, error) {
-	if envelope.FormatVersion != FormatVersion {
-		return nil, errors.New("cryptobox: unsupported format")
+	if err := envelope.Validate(); err != nil {
+		return nil, err
 	}
 	key, ok := keyring.Keys[envelope.KEKVersion]
 	if !ok {
@@ -88,7 +91,8 @@ func AAD(parts ...string) []byte {
 }
 
 func (e Envelope) Validate() error {
-	if e.FormatVersion != FormatVersion || e.KEKVersion <= 0 || len(e.Nonce) != 12 || len(e.Ciphertext) < 16 {
+	if (e.FormatVersion != LegacyFormatVersion && e.FormatVersion != FormatVersion) ||
+		e.KEKVersion <= 0 || len(e.Nonce) != 12 || len(e.Ciphertext) < 16 {
 		return fmt.Errorf("cryptobox: invalid envelope")
 	}
 	return nil

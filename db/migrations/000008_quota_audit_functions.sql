@@ -18,7 +18,9 @@ SECURITY DEFINER
 SET search_path = pg_catalog
 AS $function$
 BEGIN
-    IF p_id IS NULL OR p_actor_type NOT IN ('api_key', 'admin_cli', 'system')
+    IF p_id IS NULL OR p_actor_type IS NULL OR p_actor_id IS NULL OR p_action IS NULL
+       OR p_resource_type IS NULL OR p_resource_id IS NULL OR p_request_id IS NULL OR p_outcome IS NULL
+       OR p_actor_type NOT IN ('api_key', 'admin_cli', 'system')
        OR p_action NOT IN ('credential.bootstrap', 'credential.revoke', 'endpoint.create', 'delivery.replay')
        OR p_resource_type NOT IN ('workspace', 'api_key', 'endpoint', 'delivery')
        OR p_outcome NOT IN ('accepted', 'revoked')
@@ -59,7 +61,8 @@ DECLARE
     bucket_expiry timestamptz;
     updated_count integer;
 BEGIN
-    IF octet_length(p_dimension_hash) <> 32
+    IF p_dimension_hash IS NULL OR p_dimension_type IS NULL OR p_operation IS NULL
+       OR p_limit IS NULL OR p_window_seconds IS NULL OR octet_length(p_dimension_hash) <> 32
        OR p_dimension_type NOT IN ('global', 'workspace', 'api_key', 'delivery')
        OR p_operation NOT IN ('ingest', 'endpoint_write', 'query', 'replay')
        OR p_limit NOT BETWEEN 1 AND 1000000
