@@ -31,6 +31,10 @@ func (row fakeRow) Scan(destinations ...any) error {
 	if row.err != nil {
 		return row.err
 	}
+	if len(destinations) == 1 {
+		*destinations[0].(*bool) = true
+		return nil
+	}
 	*destinations[0].(*string) = row.role
 	*destinations[1].(*int) = row.version
 	return nil

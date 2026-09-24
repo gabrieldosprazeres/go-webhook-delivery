@@ -20,3 +20,6 @@ Usar HMAC-SHA256 `v1`. A entrada é `v1\n<timestamp>\n<event_id>\n<delivery_id>\
 
 Serão publicados vetores independentes, testes de adulteração/clock/rotação e exemplo constant-time. A assinatura autentica e protege integridade, mas deduplicação continua responsabilidade do consumidor.
 
+## Implementação
+
+Materializada na Sprint 4 com comando idempotente e serialização endpoint-scoped. Uma única versão `retiring` pode coexistir com a `active`; claims carregam snapshot atômico das duas, o header usa pares separados por `;` e o segredo anterior é purgado por job limitado após `retire_at`. O purge criptográfico preserva hash/fingerprint do comando até `metadata_retention_days`: retry idêntico após o envelope desaparecer retorna `rotation_result_expired`, enquanto fingerprint divergente retorna conflito, ambos sem nova versão ou auditoria.

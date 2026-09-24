@@ -18,18 +18,27 @@ import (
 )
 
 const (
-	claimV2     = "wde.claim_delivery(uuid,uuid,interval)"
-	claimV3     = "wde.claim_deliveries(uuid,uuid[],interval,integer,integer,integer)"
-	claimStage  = "wde.claim_deliveries_v3_stage(uuid,uuid[],interval,integer,integer,integer)"
-	finalizeV2  = "wde.finalize_delivery(uuid,uuid,uuid,bigint,boolean,smallint,integer,text)"
-	finalizeV3  = "wde.finalize_delivery(uuid,uuid,uuid,bigint,text,smallint,integer,text,interval)"
-	finalStage  = "wde.finalize_delivery_v3_stage(uuid,uuid,uuid,bigint,text,smallint,integer,text,interval)"
-	auditV4     = "wde.append_audit_event(uuid,uuid,text,text,text,text,text,text,text,text)"
-	auditStage  = "wde.append_audit_event_v4_stage(uuid,uuid,text,text,text,text,text,text,text,text)"
-	quotaV4     = "wde.consume_quota(bytea,text,text,uuid,uuid,uuid,integer,integer)"
-	quotaStage  = "wde.consume_quota_v4_stage(bytea,text,text,uuid,uuid,uuid,integer,integer)"
-	replayV4    = "wde.request_replay(uuid,uuid,uuid,uuid,text,bytea,bytea,smallint,text,text)"
-	replayStage = "wde.request_replay_v4_stage(uuid,uuid,uuid,uuid,text,bytea,bytea,smallint,text,text)"
+	claimV2        = "wde.claim_delivery(uuid,uuid,interval)"
+	claimV3        = "wde.claim_deliveries(uuid,uuid[],interval,integer,integer,integer)"
+	claimStage     = "wde.claim_deliveries_v3_stage(uuid,uuid[],interval,integer,integer,integer)"
+	finalizeV2     = "wde.finalize_delivery(uuid,uuid,uuid,bigint,boolean,smallint,integer,text)"
+	finalizeV3     = "wde.finalize_delivery(uuid,uuid,uuid,bigint,text,smallint,integer,text,interval)"
+	finalStage     = "wde.finalize_delivery_v3_stage(uuid,uuid,uuid,bigint,text,smallint,integer,text,interval)"
+	auditV4        = "wde.append_audit_event(uuid,uuid,text,text,text,text,text,text,text,text)"
+	auditStage     = "wde.append_audit_event_v4_stage(uuid,uuid,text,text,text,text,text,text,text,text)"
+	quotaV4        = "wde.consume_quota(bytea,text,text,uuid,uuid,uuid,integer,integer)"
+	quotaStage     = "wde.consume_quota_v4_stage(bytea,text,text,uuid,uuid,uuid,integer,integer)"
+	replayV4       = "wde.request_replay(uuid,uuid,uuid,uuid,text,bytea,bytea,smallint,text,text)"
+	replayStage    = "wde.request_replay_v4_stage(uuid,uuid,uuid,uuid,text,bytea,bytea,smallint,text,text)"
+	rotationV5     = "wde.rotate_endpoint_secret(uuid,uuid,uuid,uuid,uuid,text,smallint,bytea,bytea,smallint,text,text,bytea,bytea,integer)"
+	rotationStage  = "wde.rotate_endpoint_secret_v5_stage(uuid,uuid,uuid,uuid,uuid,text,smallint,bytea,bytea,smallint,text,text,bytea,bytea,integer)"
+	claimV5Stage   = "wde.claim_deliveries_v5_stage(uuid,uuid[],interval,integer,integer,integer)"
+	metadataV5     = "wde.purge_expired_metadata(integer)"
+	metadataStage  = "wde.purge_expired_metadata_v5_stage(integer)"
+	backlogV5      = "wde.retention_backlog()"
+	backlogStage   = "wde.retention_backlog_v5_stage()"
+	workspaceV5    = "wde.purge_workspace(integer)"
+	workspaceStage = "wde.purge_workspace_v5_stage(integer)"
 )
 
 func TestMigrationBoundariesRemainFailClosed(t *testing.T) {
@@ -57,11 +66,11 @@ func TestMigrationBoundariesRemainFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, version := range []int{3, 4, 5, 6, 7, 8, 9, 10} {
+	for _, version := range []int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19} {
 		runGooseBoundary(t, ctx, root, boundarySuper, "up-to", version)
 		assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, version)
 	}
-	for _, version := range []int{9, 8, 7, 6, 5, 4, 3, 2} {
+	for _, version := range []int{18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2} {
 		runGooseBoundary(t, ctx, root, boundarySuper, "down-to", version)
 		assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, version)
 	}
@@ -69,8 +78,8 @@ func TestMigrationBoundariesRemainFailClosed(t *testing.T) {
 	// Prova que o downgrade completo para o contrato v2 permanece reversivel:
 	// o runtime v3 falha fechado em v2 e volta a iniciar somente quando toda a
 	// cadeia 000003..000006 e reaplicada atomicamente.
-	runGooseBoundary(t, ctx, root, boundarySuper, "up-to", 10)
-	assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, 10)
+	runGooseBoundary(t, ctx, root, boundarySuper, "up-to", 19)
+	assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, 19)
 }
 
 func runGooseBoundary(t *testing.T, ctx context.Context, root, databaseURL, direction string, version int) {
@@ -91,8 +100,11 @@ func assertMigrationBoundary(t *testing.T, ctx context.Context, superURL, worker
 	if physical >= 6 {
 		logical = 3
 	}
-	if physical == 10 {
+	if physical >= 10 {
 		logical = 4
+	}
+	if physical == 19 {
+		logical = 5
 	}
 	var schemaVersion, gooseVersion int
 	if err := super.QueryRow(ctx, `SELECT wde.schema_version(),
@@ -122,18 +134,27 @@ func assertMigrationBoundary(t *testing.T, ctx context.Context, superURL, worker
 	assertFunctionState(t, ctx, super, auditStage, physical >= 8 && physical <= 9, false)
 	assertFunctionState(t, ctx, super, quotaStage, physical >= 8 && physical <= 9, false)
 	assertFunctionState(t, ctx, super, replayStage, physical == 9, false)
-	assertAPIFunctionState(t, ctx, super, auditV4, physical == 10, physical == 10)
-	assertAPIFunctionState(t, ctx, super, quotaV4, physical == 10, physical == 10)
-	assertAPIFunctionState(t, ctx, super, replayV4, physical == 10, physical == 10)
+	assertAPIFunctionState(t, ctx, super, auditV4, physical >= 10, physical >= 10)
+	assertAPIFunctionState(t, ctx, super, quotaV4, physical >= 10, physical >= 10)
+	assertAPIFunctionState(t, ctx, super, replayV4, physical >= 10, physical >= 10)
+	assertAPIFunctionState(t, ctx, super, rotationStage, physical >= 12 && physical <= 18, false)
+	assertAPIFunctionState(t, ctx, super, rotationV5, physical == 19, physical == 19)
+	assertFunctionState(t, ctx, super, claimV5Stage, physical == 18, false)
+	assertFunctionState(t, ctx, super, metadataStage, physical >= 14 && physical <= 18, false)
+	assertFunctionState(t, ctx, super, metadataV5, physical == 19, physical == 19)
+	assertFunctionState(t, ctx, super, backlogStage, physical >= 15 && physical <= 18, false)
+	assertFunctionState(t, ctx, super, backlogV5, physical == 19, physical == 19)
+	assertFunctionState(t, ctx, super, workspaceStage, physical >= 17 && physical <= 18, false)
+	assertFunctionState(t, ctx, super, workspaceV5, physical == 19, physical == 19)
 
 	worker := mustPool(t, ctx, workerURL)
 	defer worker.Close()
 	err := database.Check(ctx, worker, database.RoleWorker)
-	if physical == 10 && err != nil {
-		t.Fatalf("v4 runtime rejected complete boundary: %v", err)
+	if physical == 19 && err != nil {
+		t.Fatalf("v5 runtime rejected complete boundary: %v", err)
 	}
-	if physical != 10 && !errors.Is(err, database.ErrIncompatibleSchema) {
-		t.Fatalf("v4 runtime did not fail closed at boundary %d: %v", physical, err)
+	if physical != 19 && !errors.Is(err, database.ErrIncompatibleSchema) {
+		t.Fatalf("v5 runtime did not fail closed at boundary %d: %v", physical, err)
 	}
 }
 

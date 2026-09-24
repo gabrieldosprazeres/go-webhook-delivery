@@ -2,7 +2,7 @@
 
 Servico de entrega confiavel de webhooks escrito em Go. O projeto demonstra ingestao idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento multi-tenant, assinatura HMAC, defesa SSRF e operacao observavel.
 
-> Estado atual: Sprint 3 implementada. Alem da entrega concorrente confiavel, a API aplica quotas PostgreSQL globais/tenant/chave, pagina consultas, cria replay por geracao e registra acoes sensiveis em auditoria append-only. O projeto nunca promete `exactly-once`.
+> Estado atual: Sprint 4 implementada. O engine inclui entrega concorrente, quotas persistentes, replay por geracao, cliente HTTP anti-SSRF, envelopes AES-256-GCM, rotação HMAC com assinatura dupla, purge e restore fail-closed. O projeto nunca promete `exactly-once`.
 
 ## Stack
 
@@ -55,7 +55,7 @@ go run ./cmd/api credentials bootstrap --name 'Demo local' \
   --output-file='./local-credentials.json'
 ```
 
-O arquivo criado contém `api_key`. O fluxo HTTP inicial esta documentado em [`api/openapi.yaml`](api/openapi.yaml). Endpoints HTTP sao aceitos apenas nos profiles locais/de teste e apenas em loopback; a criacao permanece fechada em producao ate a defesa SSRF completa da Sprint 4.
+O arquivo criado contém `api_key`. O fluxo HTTP esta documentado em [`api/openapi.yaml`](api/openapi.yaml). Produção aceita somente destinos HTTPS; HTTP é permitido apenas em loopback nos profiles local/test com a flag explícita.
 
 ## Execucao sem containers
 
@@ -113,6 +113,24 @@ Quotas autenticadas usam buckets PostgreSQL em uma unica transacao para dimensoe
 
 `POST /v1/deliveries/{id}/replays` exige `deliveries:retry`, motivo, `Idempotency-Key` e quota. Um replay valido cria novo `run_number`, zera somente o contador do run e preserva `attempt_sequence`, fencing e historico. Comandos concorrentes identicos retornam o mesmo comando; conteudo divergente gera `409`; payload expurgado falha fechado. Comando, transicao e auditoria confirmam ou revertem juntos.
 
+`POST /v1/endpoints/{id}/secret-rotations` exige `endpoints:write` e `Idempotency-Key`. A nova chave fica `active` e a anterior `retiring`; durante a janela de 1 hora a 7 dias cada tentativa carrega as duas assinaturas no header `WDE-Signature`. Uma nova rotação é recusada enquanto houver overlap ativo. Depois da janela, o worker purga somente o envelope antigo; hash e fingerprint do comando sobrevivem por `metadata_retention_days`. Um retry idêntico cujo segredo já foi purgado retorna `409 rotation_result_expired`, e conteúdo divergente continua retornando conflito sem nova rotação.
+
+O cliente de saída canonicaliza IDNs, rejeita credenciais/query/fragmento e formatos ambíguos, resolve todos os A/AAAA a cada nova conexão e falha se qualquer endereço não for publicamente alcançável segundo o registro especial da IANA. IPv6 é aceito somente no espaço global atualmente alocado, com exceções IANA explícitas; NAT64, 6to4, SRv6 local, documentação, benchmark, metadata e mapped IPv6 permanecem bloqueados. O IP validado é fixado no `DialContext`; hostname/SNI e validação TLS permanecem intactos. Proxy ambiental e redirects são ignorados/bloqueados.
+
+Payloads e segredos usam AES-256-GCM com keyrings separados fora do banco. O envelope v2 vincula por AAD versão, workspace, tipo, recurso e metadados imutáveis. Nonce é aleatório por escrita; versões desconhecidas, transplante e adulteração falham fechado. A leitura do formato v1 permanece somente para upgrade seguro.
+
+O worker executa purge horário e drena batches dentro de um budget de 15 minutos. Payload expirado invalida fencing, abandona attempts em andamento, terminaliza a delivery com `payload_expired` e só então zera o envelope; o replay posterior é recusado. Attempts, comandos, deliveries, events, auditoria e buckets vencidos também são removidos automaticamente. O loop usa progresso por sweep e consulta o backlog exato somente ao estabilizar, evitando scans quadráticos. O estado agregado publica em log estruturado contagens, backlog acionável, duração e idade mais antiga atual sem identificador de tenant. Exclusão de workspace revoga/bloqueia primeiro, serializa com rotação de segredo e avança por checkpoints pequenos com lease/fencing e rewind defensivo; tombstone e auditoria só registram conclusão após a última etapa.
+
+Após restaurar um backup, mantenha API/worker fora do tráfego e execute a quarentena antes de qualquer readiness:
+
+```bash
+go run ./cmd/api restore quarantine --generation 1
+# valide as revogações e reconcilie o snapshot
+go run ./cmd/api restore reconcile --generation 1
+```
+
+A quarentena revoga todas as API keys e HMAC secrets restauradas, suspende workspaces/endpoints e invalida leases. `restore reconcile` só libera readiness se nenhuma credencial, workspace, endpoint ou delivery de egress estiver ativa. Para exclusão administrativa: `go run ./cmd/api workspace purge --id <workspace-uuid>`.
+
 Cursores de listagem são binários, versionados, vinculados ao workspace e autenticados com HMAC. Alteração de qualquer byte ou uso em outro tenant retorna `400 invalid_page` sem revelar dados.
 
 Timeouts, erros de rede, `408`, `425`, `429` e `5xx` recebem retry. Redirects, os demais `4xx` e status fora de `100..599` sao falhas permanentes. O atraso usa full jitter exponencial; `Retry-After` so e aceito quando valido e dentro do teto, caso contrario a politica padrao prevalece. A ultima falha transitoria termina em `dead_letter`, preservando todas as tentativas. Em `SIGINT`/`SIGTERM`, o worker para novos claims, drena jobs, cancela os restantes antes do fim e retorna no deadline absoluto de no maximo 30 segundos mesmo diante de dependencia nao cooperativa.
@@ -165,6 +183,8 @@ internal/auth/       API keys, principal e bootstrap/revogacao
 internal/endpoint/   destinos, subscriptions e segredo de assinatura
 internal/event/      ingresso idempotente e fan-out transacional
 internal/delivery/   claim, envio HTTP e timeline
+internal/outboundhttp/ parser, resolução e dialer anti-SSRF
+internal/retention/  purge, exclusão e restore quarantine
 internal/signing/    protocolo HMAC v1
 internal/platform/   configuracao, criptografia, logging e lifecycle
 db/migrations/       migrations versionadas e fail-closed

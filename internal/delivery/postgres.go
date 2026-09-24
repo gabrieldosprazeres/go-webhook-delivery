@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/cryptobox"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,7 +44,9 @@ func (s *PostgresStore) ClaimBatch(ctx context.Context, request ClaimRequest) ([
 		fencing_token,attempt_number,max_attempts,scheme,host_ascii,port,
 		target_cipher_format_version,target_ciphertext,target_nonce,target_kek_version,
 		event_type,payload_cipher_format_version,payload_ciphertext,payload_nonce,payload_kek_version,
-		key_id,secret_version_id,secret_cipher_format_version,secret_ciphertext,secret_nonce,secret_kek_version
+		key_id,secret_version_id,secret_cipher_format_version,secret_ciphertext,secret_nonce,secret_kek_version,
+		retiring_key_id,retiring_secret_version_id,retiring_cipher_format_version,
+		retiring_secret_ciphertext,retiring_secret_nonce,retiring_kek_version
 		FROM wde.claim_deliveries($1,$2,$3,$4,$5,$6)`, request.WorkerID, attemptIDs,
 		request.LeaseTTL, request.Limit, request.WorkspaceLimit, request.EndpointLimit)
 	if err != nil {
@@ -63,12 +66,22 @@ func (s *PostgresStore) ClaimBatch(ctx context.Context, request ClaimRequest) ([
 
 func scanClaim(row pgx.Row) (Claim, error) {
 	var c Claim
+	var retiringKeyID *string
+	var retiringID *uuid.UUID
+	var retiringFormat, retiringKEK *int16
+	var retiringCiphertext, retiringNonce []byte
 	err := row.Scan(&c.WorkspaceID, &c.DeliveryID, &c.EventID, &c.EndpointID,
 		&c.FencingToken, &c.AttemptNumber, &c.MaxAttempts, &c.Scheme, &c.Host, &c.Port,
 		&c.Target.FormatVersion, &c.Target.Ciphertext, &c.Target.Nonce, &c.Target.KEKVersion,
 		&c.EventType, &c.Payload.FormatVersion, &c.Payload.Ciphertext, &c.Payload.Nonce,
 		&c.Payload.KEKVersion, &c.KeyID, &c.SecretVersionID, &c.Secret.FormatVersion,
-		&c.Secret.Ciphertext, &c.Secret.Nonce, &c.Secret.KEKVersion)
+		&c.Secret.Ciphertext, &c.Secret.Nonce, &c.Secret.KEKVersion,
+		&retiringKeyID, &retiringID, &retiringFormat, &retiringCiphertext, &retiringNonce, &retiringKEK)
+	if err == nil && retiringKeyID != nil && retiringID != nil && retiringFormat != nil && retiringKEK != nil {
+		c.Retiring = &ClaimSecret{KeyID: *retiringKeyID, VersionID: *retiringID,
+			Envelope: cryptobox.Envelope{FormatVersion: *retiringFormat, KEKVersion: *retiringKEK,
+				Ciphertext: retiringCiphertext, Nonce: retiringNonce}}
+	}
 	return c, err
 }
 

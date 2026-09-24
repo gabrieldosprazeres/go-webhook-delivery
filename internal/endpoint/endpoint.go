@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"strconv"
 
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/outboundhttp"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/cryptobox"
 	"github.com/google/uuid"
@@ -17,10 +18,14 @@ type Service struct {
 	profile   config.Profile
 	allowHTTP bool
 	materials cryptobox.Materials
+	policy    outboundhttp.Policy
 }
 
 func NewService(store Store, profile config.Profile, allowHTTP bool, materials cryptobox.Materials) *Service {
-	return &Service{store: store, profile: profile, allowHTTP: allowHTTP, materials: materials}
+	return &Service{
+		store: store, profile: profile, allowHTTP: allowHTTP, materials: materials,
+		policy: outboundhttp.Policy{Profile: profile},
+	}
 }
 
 func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, input CreateInput) (Created, error) {
@@ -28,7 +33,7 @@ func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, input Creat
 }
 
 func (s *Service) CreateAs(ctx context.Context, workspaceID uuid.UUID, actorType, actorID, requestID string, input CreateInput) (Created, error) {
-	destination, eventTypes, err := s.validateCreateInput(input)
+	destination, eventTypes, err := s.validateCreateInput(ctx, input)
 	if err != nil {
 		return Created{}, err
 	}
@@ -42,10 +47,13 @@ func (s *Service) CreateAs(ctx context.Context, workspaceID uuid.UUID, actorType
 	return createdResponse(record, destination, secret), nil
 }
 
-func (s *Service) validateCreateInput(input CreateInput) (destination, []string, error) {
+func (s *Service) validateCreateInput(ctx context.Context, input CreateInput) (destination, []string, error) {
 	scheme, host, port, path, err := validateURL(s.profile, s.allowHTTP, input.URL)
 	if err != nil {
 		return destination{}, nil, err
+	}
+	if _, err := s.policy.Resolve(ctx, host); err != nil {
+		return destination{}, nil, ErrInvalid
 	}
 	eventTypes, err := validateEventTypes(input.EventTypes)
 	return destination{scheme: scheme, host: host, port: port, path: path}, eventTypes, err
@@ -103,12 +111,12 @@ func newSigningSecret() ([]byte, string, error) {
 }
 
 func (s *Service) sealRecord(workspaceID, id, secretID uuid.UUID, keyID string, target destination, secret []byte) (cryptobox.Envelope, cryptobox.Envelope, error) {
-	targetAAD := cryptobox.AAD("1", workspaceID.String(), id.String(), target.scheme, target.host, strconv.Itoa(target.port))
+	targetAAD := targetAssociatedData(cryptobox.FormatVersion, workspaceID, id, target)
 	targetEnvelope, err := cryptobox.Seal(s.materials.Signing, []byte(target.path), targetAAD)
 	if err != nil {
 		return cryptobox.Envelope{}, cryptobox.Envelope{}, err
 	}
-	secretAAD := cryptobox.AAD("1", workspaceID.String(), id.String(), secretID.String(), keyID)
+	secretAAD := secretAssociatedData(cryptobox.FormatVersion, workspaceID, id, secretID, keyID)
 	secretEnvelope, err := cryptobox.Seal(s.materials.Signing, secret, secretAAD)
 	return targetEnvelope, secretEnvelope, err
 }
@@ -125,11 +133,26 @@ func (s *Service) Get(ctx context.Context, workspaceID, id uuid.UUID) (Endpoint,
 	if err != nil {
 		return Endpoint{}, err
 	}
-	aad := cryptobox.AAD("1", workspaceID.String(), id.String(), record.Scheme, record.Host, strconv.Itoa(record.Port))
+	aad := targetAssociatedData(record.Target.FormatVersion, workspaceID, id,
+		destination{scheme: record.Scheme, host: record.Host, port: record.Port})
 	path, err := cryptobox.Open(s.materials.Signing, record.Target, aad)
 	if err != nil {
 		return Endpoint{}, err
 	}
 	defer clear(path)
 	return Endpoint{ID: id, URL: buildURL(record.Scheme, record.Host, record.Port, string(path)), Status: record.Status, EventTypes: record.EventTypes}, nil
+}
+
+func targetAssociatedData(version int16, workspaceID, endpointID uuid.UUID, target destination) []byte {
+	if version == cryptobox.LegacyFormatVersion {
+		return cryptobox.AAD("1", workspaceID.String(), endpointID.String(), target.scheme, target.host, strconv.Itoa(target.port))
+	}
+	return cryptobox.AAD("2", workspaceID.String(), "endpoint_target", endpointID.String(), target.scheme, target.host, strconv.Itoa(target.port))
+}
+
+func secretAssociatedData(version int16, workspaceID, endpointID, secretID uuid.UUID, keyID string) []byte {
+	if version == cryptobox.LegacyFormatVersion {
+		return cryptobox.AAD("1", workspaceID.String(), endpointID.String(), secretID.String(), keyID)
+	}
+	return cryptobox.AAD("2", workspaceID.String(), "signing_secret", endpointID.String(), secretID.String(), keyID)
 }

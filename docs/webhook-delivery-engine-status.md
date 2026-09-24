@@ -1,7 +1,7 @@
 # Status: Webhook Delivery Engine
 
 **Atualizado em:** 2026-09-24
-**Branch:** `feature/sprint-3-tenancy-replay-ops`
+**Branch:** `feature/sprint-4-output-data-security`
 
 ## Planejamento
 
@@ -222,3 +222,47 @@ Sprint 2 integrada a `main` nos commits `ca1b7f1` e `a6afea3`.
 ## Próximo gate
 
 Sprint 3 apta para commit e integração em `main`; em seguida, iniciar a Sprint 4 — Segurança de saída e dados.
+
+## Sprint 4 — Segurança de saída e dados
+
+- ✅ S4-01 — Cliente HTTP anti-SSRF — implementada
+- ✅ S4-02 — Envelope AES-256-GCM — implementada
+- ✅ S4-03 — Rotação HMAC — implementada
+- ✅ S4-04 — Retenção, purge e restore quarantine — implementada
+- ✅ Code Review — rodada final aprovada, com zero blockers e zero warnings
+- ✅ QA independente — aprovado, 180/180 testes e subtestes na regressão real, stress S4 120/120 e zero skip
+
+### Evidências do Stack Agent
+
+- `internal/outboundhttp` aplica parser/IDNA estritos, resolve todos A/AAAA, bloqueia IPv4/IPv6/mapped e faixas especiais, fixa o IP validado no dial, mantém hostname/SNI, ignora proxy ambiental e recusa redirects.
+- O transporte limita DNS, conexão, handshake TLS, response headers, tentativa e corpo; testes adversariais cobrem tabela IANA IPv4/IPv6, NAT64/6to4, DNS misto, rebinding, SNI com IP pinado, proxy, redirect, TLS inválido, lentidão e excesso de headers/corpo.
+- Novas escritas usam envelope AES-256-GCM v2 com AAD tipado por workspace/recurso/metadados; v1 permanece leitura legada conhecida. Nonce fresco, tamper, transplante entre keyrings e versão desconhecida são testados fail-closed.
+- Rotação concorrente/idempotente mantém uma chave `active` e uma `retiring`; o claim captura as duas e a tentativa emite assinatura dupla. Overlap é limitado a 1 hora–7 dias e segredo expirado é zerado all-or-none sem apagar o comando idempotente; retries posteriores retornam expiração/conflito sem mutação.
+- Purge de payload bloqueia o evento/deliveries, abandona attempt iniciado, incrementa fencing, terminaliza com `payload_expired`, limpa o envelope e faz replay falhar fechado. Retenção também remove metadata, comandos, auditoria e buckets; batches rejeitam `NULL`/fora de 1–1.000 e o runner drena por progresso antes de um único scan final de backlog, publicando idade zero quando vazio. Purge de workspace serializa com rotação, avança por checkpoint/batch com lease/fencing, rebobina diante de dependência tardia e preserva tombstone/auditoria.
+- Restore quarantine revoga todas as API keys e HMAC secrets, suspende workspace/endpoint, invalida leases e derruba readiness. Reconciliação só libera readiness quando nenhuma superfície restaurada está ativa.
+- Roles `wde_rotation_executor` e `wde_maintenance_executor` são `NOLOGIN`; funções `SECURITY DEFINER` fixam `search_path=pg_catalog`, não expõem `PUBLIC EXECUTE` e roles login recebem somente os entrypoints necessários.
+- Migrations físicas `000011`–`000019` têm menos de 200 linhas. O schema lógico v5 só é publicado em `000019`; boundary tests percorrem subida 3→19, descida 18→2 e re-upgrade fail-closed.
+- O ciclo incremental `up → down-to 10 → up` passou em PostgreSQL 17 descartável, confirmando reversibilidade no boundary vazio e republicação segura do schema lógico v5.
+- `make integration` passou integralmente em PostgreSQL 17 com regressões S1–S3 e doze cenários S4, incluindo classificação IANA/NAT64, rejeição de lotes nulos e teto físico de 1.000, retry tardio de rotação após purge, backlog com 2.501 registros, pais ainda inelegíveis, purge de workspace concorrente/checkpointado, ACL mínima e restore seguido de reconciliação.
+- Os cenários adversariais S4 passaram três vezes consecutivas; a suíte anti-SSRF passou vinte vezes consecutivas, incluindo SNI com hostname original e IP pinado, header acima de 32 KiB e deadline compartilhado em múltiplos A/AAAA.
+- `make check`, `docker compose --profile demo config --quiet` e `git diff --check` passaram; testes unitários, race detector, `vet`, Staticcheck, `govulncheck`, OpenAPI, Goose validate e build dos três binários estão verdes.
+
+### QA da Sprint 4
+
+**Veredicto:** ✅ Aprovado em 2026-09-24.
+
+- `make check` passou após os testes de QA com unitários, integração, race detector, `vet`, Staticcheck, `govulncheck`, OpenAPI, Goose validate e build dos três binários.
+- A regressão integral sem cache em PostgreSQL 17.11 executou 180/180 testes e subtestes em 20 pacotes, com zero skip e zero falha; `make integration` preservou as regressões S1–S3 e passou os doze cenários S4.
+- A matriz S4 passou 120/120 em stress; restore, purge/rotation e rotação concorrente passaram 60/60; os canários de auditoria passaram 40/40 sob race detector.
+- Anti-SSRF foi validado contra faixas IANA IPv4/IPv6, mapped/NAT64/transições, IDN, DNS misto/rebinding, IP pinning/SNI, proxy/redirect/TLS e limites de tempo/header/body.
+- AEAD v2, AAD, keyrings, tamper/transplante, all-or-none e ausência de sinks passaram; leitura v1 de target, payload e segredos active/retiring passou 20/20 sob race.
+- Rotação HMAC, overlap, assinatura dupla, expiração/purge, retries tardios e auditoria permaneceram íntegros sob concorrência.
+- Retenção cobriu todas as categorias, batches/checkpoint, backlog/oldest, lease/fencing, cancelamento, dependência tardia, tombstone, restore snapshot, quarantine/readiness e reconcile.
+- Migrations `000001`–`000019`, boundaries `up/down/up`, ACL/RLS, owners mínimos, `search_path`, ausência de `PUBLIC EXECUTE` e zero databases temporários foram confirmados em PostgreSQL real.
+- Probes reais dos binários confirmaram listener público sem health, liveness/readiness separados, `503` durante quarantine, retorno a `200` após reconcile e shutdown limpo.
+- O QA alterou somente harness/testes: fechamento de pools auxiliares, canários de auditoria e compatibilidade AEAD v1 explícita. Nenhum código de produção foi modificado.
+- Relatório completo: `docs/webhook-delivery-engine-qa-sprint-4.md`.
+
+## Próximo gate
+
+Sprint 4 aprovada em Code Review e QA, apta para commit e integração em `main`; em seguida, iniciar a Sprint 5 — Observabilidade e operação.

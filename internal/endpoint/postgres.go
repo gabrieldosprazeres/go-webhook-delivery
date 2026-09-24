@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/tenanttx"
 	"github.com/google/uuid"
@@ -34,6 +35,40 @@ func (s *PostgresStore) Create(ctx context.Context, record NewRecord) error {
 			record.AuditID, record.WorkspaceID, record.ActorType, record.ActorID, record.ID.String(), record.RequestID)
 		return err
 	})
+}
+
+func (s *PostgresStore) Rotate(ctx context.Context, record RotationRecord) (RotationStored, error) {
+	var stored RotationStored
+	err := tenanttx.Within(ctx, s.pool, record.WorkspaceID, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `SELECT secret_version_id,key_id,cipher_format_version,
+			secret_ciphertext,secret_nonce,kek_version,duplicate
+			FROM wde.rotate_endpoint_secret($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+			record.CommandID, record.AuditID, record.WorkspaceID, record.EndpointID,
+			record.SecretVersionID, record.KeyID, record.Secret.FormatVersion, record.Secret.Ciphertext,
+			record.Secret.Nonce, record.Secret.KEKVersion, record.ActorID, record.RequestID,
+			record.IdempotencyHash, record.Fingerprint, record.OverlapSeconds).Scan(&stored.SecretVersionID,
+			&stored.KeyID, &stored.Secret.FormatVersion, &stored.Secret.Ciphertext, &stored.Secret.Nonce,
+			&stored.Secret.KEKVersion, &stored.Duplicate)
+		if err == nil {
+			return nil
+		}
+		message := err.Error()
+		switch {
+		case strings.Contains(message, "rotation_not_found"):
+			return ErrNotFound
+		case strings.Contains(message, "rotation_conflict"):
+			return ErrRotationConflict
+		case strings.Contains(message, "rotation_result_expired"):
+			return ErrRotationExpired
+		case strings.Contains(message, "rotation_in_progress"):
+			return ErrRotationInProgress
+		case strings.Contains(message, "rotation_invalid"), strings.Contains(message, "rotation_no_active_secret"):
+			return ErrInvalid
+		default:
+			return err
+		}
+	})
+	return stored, err
 }
 
 func (s *PostgresStore) Get(ctx context.Context, workspaceID, id uuid.UUID) (StoredRecord, error) {

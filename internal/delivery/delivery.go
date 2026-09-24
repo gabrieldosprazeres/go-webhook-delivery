@@ -3,16 +3,14 @@ package delivery
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"time"
 
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/outboundhttp"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/cryptobox"
 	"github.com/google/uuid"
 )
-
-var errRedirectDisabled = errors.New("redirect disabled")
 
 type Runner struct {
 	store          Store
@@ -48,15 +46,7 @@ func NewRunner(store Store, materials cryptobox.Materials, profile config.Profil
 }
 
 func NewRunnerWithOptions(store Store, materials cryptobox.Materials, profile config.Profile, allowHTTP bool, workerID uuid.UUID, opts RunnerOptions) *Runner {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	transport.MaxResponseHeaderBytes = 32 << 10
-	client := &http.Client{
-		Transport: transport,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return errRedirectDisabled
-		},
-	}
+	client := outboundhttp.NewClient(profile)
 	if opts.Client != nil {
 		client = opts.Client
 	}

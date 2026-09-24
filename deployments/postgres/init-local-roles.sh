@@ -32,10 +32,12 @@ CREATE ROLE wde_worker_executor NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NORE
 CREATE ROLE wde_audit_executor NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
 CREATE ROLE wde_quota_executor NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
 CREATE ROLE wde_replay_executor NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+CREATE ROLE wde_maintenance_executor NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+CREATE ROLE wde_rotation_executor NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
 
 GRANT wde_owner TO wde_migrator;
 GRANT wde_auth_executor, wde_worker_executor, wde_audit_executor,
-  wde_quota_executor, wde_replay_executor TO wde_owner;
+  wde_quota_executor, wde_replay_executor, wde_maintenance_executor, wde_rotation_executor TO wde_owner;
 ALTER DATABASE wde OWNER TO wde_owner;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON DATABASE wde FROM PUBLIC;

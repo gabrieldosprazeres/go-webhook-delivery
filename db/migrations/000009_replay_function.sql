@@ -23,6 +23,8 @@ DECLARE
     next_run integer;
 BEGIN
     IF p_command_id IS NULL OR p_audit_id IS NULL OR p_workspace_id IS NULL OR p_delivery_id IS NULL
+       OR p_actor_id IS NULL OR p_idempotency_key_hash IS NULL OR p_fingerprint IS NULL
+       OR p_fingerprint_version IS NULL OR p_reason IS NULL OR p_request_id IS NULL
        OR char_length(p_actor_id) NOT BETWEEN 1 AND 128
        OR octet_length(p_idempotency_key_hash) <> 32 OR octet_length(p_fingerprint) <> 32
        OR p_fingerprint_version <> 1 OR char_length(p_reason) NOT BETWEEN 1 AND 500

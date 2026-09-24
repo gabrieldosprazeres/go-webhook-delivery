@@ -113,6 +113,7 @@ func publicRoutes(optional ...routesDependencies) http.Handler {
 		deps := optional[0]
 		mux.Handle("POST /v1/endpoints", deps.protected("endpoints:write", "endpoint_write", deps.quotas.EndpointWrite, http.HandlerFunc(deps.endpoints.Create)))
 		mux.Handle("GET /v1/endpoints/{id}", deps.protected("deliveries:read", "query", deps.quotas.Query, http.HandlerFunc(deps.endpoints.Get)))
+		mux.Handle("POST /v1/endpoints/{id}/secret-rotations", deps.protected("endpoints:write", "endpoint_write", deps.quotas.EndpointWrite, http.HandlerFunc(deps.endpoints.Rotate)))
 		mux.Handle("POST /v1/events", deps.protected("events:write", "ingest", deps.quotas.Ingest, http.HandlerFunc(deps.events.Publish)))
 		mux.Handle("GET /v1/deliveries", deps.protected("deliveries:read", "query", deps.quotas.Query, http.HandlerFunc(deps.deliveries.List)))
 		mux.Handle("GET /v1/deliveries/{id}", deps.protected("deliveries:read", "query", deps.quotas.Query, http.HandlerFunc(deps.deliveries.Get)))
