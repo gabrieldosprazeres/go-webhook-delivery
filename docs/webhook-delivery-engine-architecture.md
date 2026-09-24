@@ -316,8 +316,10 @@ O fingerprint persistido é HMAC-SHA-256, com pepper próprio fora do banco, sob
 
 ```text
 capacidade livre N -> BEGIN curto
-  selecionar candidatas elegíveis ordenadas por next_attempt_at/id
-  FOR UPDATE SKIP LOCKED, no máximo N e limite por endpoint no batch
+  selecionar candidatas por cursor persistido de workspace/endpoint e next_attempt_at/id
+  FOR UPDATE OF workspace/endpoint_runtime/delivery SKIP LOCKED
+  obter número monotônico com sequence PostgreSQL, sem row lock global
+  no máximo N e limites por workspace/endpoint no batch
   serializar claims de um mesmo endpoint por lock de sua linha de capacidade
   conferir concorrência ativa por endpoint
   status=processing, lease_owner, lease_expires_at
@@ -326,7 +328,7 @@ capacidade livre N -> BEGIN curto
 COMMIT -> executar HTTP fora da transação
 ```
 
-O relógio autoritativo para elegibilidade, lease e auditoria é `clock_timestamp()` do PostgreSQL em UTC. O batch nunca excede slots livres. O scheduler usa polling com jitter e backoff vazio; `LISTEN/NOTIFY` fica adiado porque não é necessário para a meta inicial.
+O relógio autoritativo é sempre o PostgreSQL em UTC: `statement_timestamp()` fixa o instante de elegibilidade e permite planos indexados; `clock_timestamp()` registra transições, leases e auditoria. O batch nunca excede slots livres. Cada acesso de claim ao banco recebe contexto com deadline default de `200ms`, limitado a `2s` e nunca maior que poll ou lease. O scheduler usa polling com jitter e backoff vazio; `LISTEN/NOTIFY` fica adiado porque não é necessário para a meta inicial.
 
 ### 10.3 Entrega
 
@@ -354,7 +356,7 @@ Se o `UPDATE` afetar zero linhas, o resultado é obsoleto e não muda a entrega.
 - outros `4xx`: `failed_permanent`;
 - violação de política SSRF/TLS/configuração: falha permanente e auditável, nunca fallback inseguro.
 
-Retry usa exponential backoff com full jitter: valor aleatório uniforme entre zero e `min(base*2^attempt, cap)`. Defaults: base 1 s, cap 15 min, máximo 10 tentativas. `Retry-After` válido pode elevar a espera até o teto de 15 min; nunca reduz proteção nem ultrapassa o teto. Ao esgotar a política, estado `dead_letter`.
+Retry usa exponential backoff com full jitter: valor aleatório uniforme entre zero e `min(base*2^attempt, cap)`. Defaults: base 1 s, cap 15 min, máximo 10 tentativas. `Retry-After` válido e dentro do teto pode elevar a espera; valor inválido ou acima do teto é ignorado e cai na política full-jitter padrão. Ao esgotar a política, estado `dead_letter`.
 
 ### 10.5 Replay
 
@@ -364,7 +366,7 @@ Replay exige escopo, motivo entre 1 e 500 caracteres, `Idempotency-Key` de até 
 
 API, ao receber `SIGTERM`/`SIGINT`, marca readiness negativa, para aceite, executa `http.Server.Shutdown` com prazo e fecha pool/telemetria.
 
-Worker marca readiness negativa, cancela o loop de claims e aguarda tarefas em andamento. Aos 25 s cancela seus contexts; até 30 s encerra. Não força finalização de resultado sem fencing válido. Jobs não finalizados retornam à elegibilidade pela expiração do lease até `TTL + 5 s`. Não há goroutine fire-and-forget.
+Worker marca readiness negativa, cancela o loop de claims e aguarda tarefas em andamento. Antes do prazo cancela seus contexts e, no deadline absoluto de no máximo 30 s, o runner retorna mesmo se transporte ou store ignorar cancelamento; o processo então encerra. Pânicos de claim/job são capturados como erro. Não força finalização de resultado sem fencing válido. Jobs não finalizados retornam à elegibilidade pela expiração do lease até `TTL + 5 s`.
 
 Crash abrupto pode deixar `attempt` iniciado; o próximo claim preserva esse registro como abandonado e cria novo attempt. O histórico nunca é reescrito.
 

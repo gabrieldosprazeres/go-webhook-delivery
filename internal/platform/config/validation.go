@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Validate applies process- and profile-specific fail-closed rules.
@@ -35,7 +36,45 @@ func (cfg Config) validateCommon() error {
 	if cfg.DatabaseTimeout <= 0 || cfg.DatabaseTimeout > maxDatabaseTimeout {
 		return errors.New("config: WDE_DATABASE_TIMEOUT must be between 1ns and 30s")
 	}
+	if cfg.Service == ServiceWorker {
+		if err := cfg.validateWorker(); err != nil {
+			return err
+		}
+	}
 	return cfg.validateAddresses()
+}
+
+func (cfg Config) validateWorker() error {
+	if cfg.WorkerConcurrency < 1 || cfg.WorkerConcurrency > 100 {
+		return errors.New("config: WDE_WORKER_CONCURRENCY must be between 1 and 100")
+	}
+	if cfg.WorkerClaimBatchSize < 1 || cfg.WorkerClaimBatchSize > cfg.WorkerConcurrency {
+		return errors.New("config: WDE_WORKER_CLAIM_BATCH_SIZE must be between 1 and worker concurrency")
+	}
+	if cfg.WorkerWorkspaceLimit < 1 || cfg.WorkerWorkspaceLimit > cfg.WorkerClaimBatchSize ||
+		cfg.WorkerEndpointLimit < 1 || cfg.WorkerEndpointLimit > cfg.WorkerClaimBatchSize {
+		return errors.New("config: worker fairness limits must be between 1 and claim batch size")
+	}
+	if cfg.WorkerPollInterval < 10*time.Millisecond || cfg.WorkerPollInterval > 10*time.Second {
+		return errors.New("config: WDE_WORKER_POLL_INTERVAL must be between 10ms and 10s")
+	}
+	if cfg.WorkerClaimTimeout < 10*time.Millisecond || cfg.WorkerClaimTimeout > 2*time.Second ||
+		cfg.WorkerClaimTimeout > cfg.WorkerPollInterval || cfg.WorkerClaimTimeout > cfg.WorkerLeaseTTL {
+		return errors.New("config: WDE_WORKER_CLAIM_TIMEOUT must be between 10ms and min(2s, poll interval, lease TTL)")
+	}
+	if cfg.WorkerRequestTimeout < 100*time.Millisecond || cfg.WorkerRequestTimeout > 20*time.Second {
+		return errors.New("config: WDE_WORKER_REQUEST_TIMEOUT must be between 100ms and 20s")
+	}
+	if cfg.WorkerLeaseTTL < cfg.WorkerRequestTimeout+10*time.Second || cfg.WorkerLeaseTTL > 2*time.Minute {
+		return errors.New("config: WDE_WORKER_LEASE_TTL must exceed request timeout by 10s and be at most 2m")
+	}
+	if cfg.WorkerRetryBase <= 0 || cfg.WorkerRetryBase > cfg.WorkerRetryCap || cfg.WorkerRetryCap > 15*time.Minute {
+		return errors.New("config: worker retry base/cap are invalid")
+	}
+	if cfg.ShutdownTimeout > 30*time.Second {
+		return errors.New("config: worker shutdown must be at most 30s")
+	}
+	return nil
 }
 
 func (cfg Config) validateAddresses() error {

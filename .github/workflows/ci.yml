@@ -114,12 +114,13 @@ jobs:
           WDE_TEST_API_DATABASE_URL: postgres://wde_api:api-local-only@127.0.0.1:55432/wde?sslmode=disable
           WDE_TEST_WORKER_DATABASE_URL: postgres://wde_worker:worker-local-only@127.0.0.1:55432/wde?sslmode=disable
           WDE_TEST_ADMIN_DATABASE_URL: postgres://wde_admin:admin-local-only@127.0.0.1:55432/wde?sslmode=disable
+          WDE_TEST_SUPERUSER_DATABASE_URL: postgres://postgres:postgres-local-only@127.0.0.1:55432/wde?sslmode=disable
         run: make integration
       - name: Start runtime services
         run: docker compose --profile core up --detach --no-deps api worker
       - name: Verify migration, roles and readiness
         run: |
-          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT wde.schema_version()")" = "2"
+          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT wde.schema_version()")" = "3"
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_api','wde.schema_metadata','SELECT')")" = "f"
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_worker','wde.schema_metadata','SELECT')")" = "f"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/healthz)" = "404"

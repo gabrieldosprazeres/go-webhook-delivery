@@ -20,10 +20,11 @@ tidy-check: ## Confere se go.mod e go.sum estao organizados, sem alterar arquivo
 test: ## Executa os testes unitarios.
 	$(GO) test ./...
 
-integration: ## Executa schema, concorrencia e E2E; exige as tres WDE_TEST_*_DATABASE_URL.
-	@test -n "$$WDE_TEST_API_DATABASE_URL" -a -n "$$WDE_TEST_WORKER_DATABASE_URL" -a -n "$$WDE_TEST_ADMIN_DATABASE_URL"
+integration: ## Executa schema, concorrencia e E2E; exige as quatro WDE_TEST_*_DATABASE_URL.
+	@test -n "$$WDE_TEST_API_DATABASE_URL" -a -n "$$WDE_TEST_WORKER_DATABASE_URL" -a -n "$$WDE_TEST_ADMIN_DATABASE_URL" -a -n "$$WDE_TEST_SUPERUSER_DATABASE_URL"
 	$(GO) test ./test/integration -run '^TestCredentialBootstrapIsSerializedAndRevocable$$' -count=1 -v
-	$(GO) test ./test/integration -run '^(TestTenantContextAndAppendOnlyACL|TestConcurrentIdempotency|TestClaimWithoutCompleteSnapshotDoesNotMutateDelivery|TestEndpointEventWorkerChaosLabSucceeded)$$' -count=1 -v
+	$(GO) test ./test/integration -run '^(TestTenantContextAndAppendOnlyACL|TestConcurrentIdempotency|TestClaimWithoutCompleteSnapshotDoesNotMutateDelivery|TestEndpointEventWorkerChaosLabSucceeded|TestMigrationBoundariesRemainFailClosed|TestBatchClaimFairnessAndConcurrentWorkers|TestLockedWorkspaceDoesNotBlockIndependentClaim|TestClaimPlanUsesReadyIndexAtRepresentativeScale|TestPersistentFairnessAcrossSingleSlotCycles|TestPersistentFairnessWithConcurrentSingleSlotWorkers|TestEndpointCapacityDoesNotStarveHealthyEndpoint|TestLeaseRecoveryFencingAndAbandonedAttempt|TestRetryHistoryDeadLetterAndNeverMaxPlusOne|TestRepeatedCrashesStopAtMaximumAttempts|TestHostileHTTPStatusDoesNotBreakFinalizeOrNextTenant)$$' -count=1 -v
+	$(GO) test ./cmd/worker -run '^TestWorkerProcessSIGTERM$$' -count=1 -v
 
 race: ## Executa todos os testes com o race detector.
 	$(GO) test -race ./...

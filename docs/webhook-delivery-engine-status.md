@@ -1,7 +1,7 @@
 # Status: Webhook Delivery Engine
 
 **Atualizado em:** 2026-09-24
-**Branch:** `feature/sprint-1-vertical-slice`
+**Branch:** `feature/sprint-2-reliability-concurrency`
 
 ## Planejamento
 
@@ -124,6 +124,46 @@ O corte vertical foi validado em PostgreSQL 17 com migration `up/down/up`, roles
 - O E2E validou create/get de endpoint, escopos, isolamento cross-tenant, 409, 413, worker, HMAC, Chaos Lab, estado `succeeded` e timeline sem material sensível.
 - Relatório completo: `docs/webhook-delivery-engine-qa-sprint-1.md`.
 
+## Sprint 2 — Confiabilidade e concorrência
+
+- ✅ S2-01 — Claim em batch com fairness — implementada
+- ✅ S2-02 — Lease, fencing e recuperação — implementada
+- ✅ S2-03 — Retry, jitter e DLQ — implementada
+- ✅ S2-04 — Graceful shutdown — implementada
+- 🔄 Code Review — ciclo 2 corrigido; revalidação pendente
+- ✅ QA — aprovado, 121/121 casos e subcasos na regressão real, 17/17 cenários de integração e stresses sem falhas
+
+### Evidências do Stack Agent
+
+- Migrations `000003`–`000006` aplicadas do zero em PostgreSQL 17; a cadeia física chegou à versão Goose 6 e somente a última etapa elevou o schema lógico para v3. `down-to 2/up` também foi validado.
+- Cada migration possui menos de 200 linhas e cada função privilegiada menos de 100; schema, transição, entrypoint e finalização ficaram separados para auditoria sem quebrar a atomicidade do claim.
+- Os boundaries Goose 3/4/5 preservam integralmente contratos e grants v2; somente a `000006` troca claim/finalize e publica schema v3 atomicamente. O caminho de downgrade restaura v2 e a versão lógica na mesma transação antes de remover helpers.
+- Teste PostgreSQL dedicado percorre `up-to 3/4/5/6` e `down-to 5/4/3/2`, validando versões lógica/física, existência e `EXECUTE` de contratos v2/v3, isolamento das funções de staging e readiness incompatível fail-closed.
+- Claim em batch usa `FOR UPDATE SKIP LOCKED`, limita o pedido aos slots livres e mantém cursor monotônico persistido por workspace/endpoint via sequence, sem row lock global, com helpers privilegiados internos e ACL mínima.
+- Deadline tipado de claim tem default de 200 ms, teto de 2 s e nunca pode exceder poll ou lease; uma transação segurando workspace/endpoint/delivery do tenant A não impediu o tenant B de progredir em menos de 500 ms.
+- Testes multi-ciclo com batch unitário, workers concorrentes e endpoint na capacidade provaram alternância persistente, ausência de claim duplicado e progresso do tenant/endpoint saudável.
+- Recuperação real aguardou um lease de 20 segundos expirar, abandonou o attempt anterior, incrementou o fencing token e retomou em menos de 5 segundos após a expiração.
+- Finalização com owner/token obsoleto afetou zero linhas; o detentor atual finalizou e o histórico manteve `abandoned/stale` seguido de `completed/success`.
+- Dez falhas transitórias e três crashes sucessivos produziram exatamente o máximo de attempts, estado `dead_letter`, histórico íntegro e nenhum `max+1`.
+- Classificação cobre rede/timeout, `408`, `425`, `429`, `5xx`, redirects, demais `4xx` e status hostil `600..999`; `Retry-After` inválido/acima do teto cai no full jitter determinístico.
+- Polling vazio usa backoff exponencial com jitter injetável. Scheduler para novos claims ao cancelar, captura pânicos e respeita deadline absoluto mesmo com claim/job não cooperativo; subprocesso com job ativo validou `SIGTERM`.
+- `EXPLAIN (ANALYZE, BUFFERS)` com 5.000 jobs confirmou `deliveries_ready_idx` sem scan sequencial; carga prolongada de 10.000 jobs manteve goroutines e memória dentro dos limites do teste.
+- `make integration` passou em PostgreSQL 17 real; stress dos cenários de concorrência passou em 20 repetições e o cenário de slot unitário em 80 processos isolados.
+- `make check`, integração com roles reais, `docker compose config` e `git diff --check` passaram; o PostgreSQL descartável em `tmpfs` foi removido após os testes.
+
+### QA da Sprint 2
+
+**Veredicto:** ✅ Aprovado em 2026-09-24.
+
+- `make check` passou com testes, race detector, vet, Staticcheck, `govulncheck`, Goose validate e build dos três binários.
+- A regressão completa sem cache e com PostgreSQL 17.11 real executou 121/121 casos e subcasos em 16 pacotes, sem skip ou falha.
+- `make integration` passou em 17/17 cenários sobre banco já reutilizado, incluindo migrations, ACL/RLS, E2E legado e `SIGTERM`.
+- Os cinco cenários críticos de concorrência passaram em 100/100 execuções; fairness com slot unitário passou em 80/80 processos isolados.
+- O ciclo de migration agora prova `up-to 3/4/5/6`, `down-to 5/4/3/2` e re-upgrade `up-to 6`, mantendo o runtime v3 fail-closed nos boundaries incompatíveis.
+- O harness de bootstrap foi isolado em database temporário próprio, eliminando dependência de banco global vazio; nenhum database temporário ficou remanescente.
+- Status HTTP hostis passaram nos limites 600, 699 e 999; a integração confirmou sanitização e progresso do tenant seguinte.
+- Relatório completo: `docs/webhook-delivery-engine-qa-sprint-2.md`.
+
 ## Próximo gate
 
-Sprint 1 concluída, revisada e aprovada em QA. Próximo passo: integrar a branch em `main` e iniciar a Sprint 2 — Confiabilidade e concorrência.
+Registrar a revalidação independente do Code Review da Sprint 2. Com zero blockers/warnings, integrar a branch e iniciar o planejamento da Sprint 3.

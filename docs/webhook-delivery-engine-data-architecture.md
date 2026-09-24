@@ -64,6 +64,7 @@ Toda seta entre recursos de tenant representa FK composta `(workspace_id, id)`.
 | `created_at` | `timestamptz` | default `clock_timestamp()` |
 | `updated_at` | `timestamptz` | atualizado explicitamente |
 | `deletion_requested_at` | `timestamptz` | nullable |
+| `last_delivery_claim_sequence` | `bigint` | cursor de fairness, não negativo; atualizado apenas pela executora do worker |
 
 Constraints: PK `(id)` e `UNIQUE (id, status)` apenas quando necessário a comandos administrativos; relações usam o ID do workspace diretamente.
 
@@ -112,7 +113,9 @@ A role da API não recebe `SELECT` direto nessas tabelas antes da autenticação
 
 `endpoint_subscriptions(workspace_id, endpoint_id, event_type)` possui PK composta; `event_type` tem 1–128 caracteres e formato limitado.
 
-`endpoint_runtime(workspace_id, endpoint_id, lock_version, updated_at)` possui uma linha por endpoint. Sua linha é bloqueada durante claims para serializar o cálculo de concorrência global sem contador suscetível a vazamento após crash.
+`endpoint_runtime(workspace_id, endpoint_id, lock_version, last_delivery_claim_sequence, updated_at)` possui uma linha por endpoint. Sua linha é bloqueada durante claims para serializar somente o cálculo de concorrência daquele endpoint, sem contador suscetível a vazamento após crash. `last_delivery_claim_sequence` é o cursor persistente por endpoint.
+
+`delivery_claim_sequence` é uma sequence PostgreSQL `bigint`, `NO CYCLE`, pertencente a `wde_worker_executor`. Ela fornece números monotônicos sem row lock global; nenhuma role login recebe `USAGE`. Não existe tabela singleton de scheduler.
 
 ### 4.5 `endpoint_secret_versions`
 
@@ -452,7 +455,9 @@ maintenance_jobs        (status, scheduled_at, id)
 replay_commands         (workspace_id, delivery_id, created_at DESC)
 ```
 
-O scheduler seleciona no máximo um teto configurado por workspace e endpoint a cada ciclo, usa ranking particionado e alterna o cursor de workspace de forma determinística. Queries possuem `statement_timeout` na role, batch máximo e plano validado com `EXPLAIN (ANALYZE, BUFFERS)` sobre massa representativa. Teste de saturação exige progresso do tenant saudável enquanto outro mantém backlog máximo.
+O scheduler seleciona no máximo um teto configurado por workspace e endpoint a cada ciclo. `delivery_claim_sequence` fornece monotonicidade sem tabela/row lock global, e o último número persistido em workspace/endpoint forma o cursor determinístico. A seleção bloqueia workspace, runtime do endpoint e delivery com `SKIP LOCKED`; uma transação presa no workspace A é ignorada por outro worker, que progride no workspace B. A alternância continua entre chamadas e workers mesmo com batch unitário.
+
+Cada `ClaimBatch` recebe deadline tipado (default `200ms`, máximo `2s` e nunca maior que poll ou lease) e o contexto do driver cancela o statement no protocolo PostgreSQL. A elegibilidade usa `statement_timestamp()` — relógio do banco estável no statement e indexável — enquanto leases/transições usam `clock_timestamp()`. Batch máximo, plano com `EXPLAIN (ANALYZE, BUFFERS)` sobre 5.000 jobs e testes de lock/saturação limitam custo e espera. Testes multi-ciclo exigem progresso do tenant e endpoint saudáveis enquanto outro mantém backlog, locks ou capacidade máxima.
 
 ## 11. Migrations
 
@@ -469,6 +474,8 @@ Ordem planejada:
 7. `000007_privileged_operations` — funções executoras, policies específicas e grants `EXECUTE`.
 
 Fixtures ficam fora da cadeia produtiva, em comando/pasta de teste separado com dupla trava: profile `local|test` e banco marcado como descartável. Migrations usam lock timeout e statement timeout explícitos. `down` existe para desenvolvimento quando reversível; migrations destrutivas em produção usam expand/contract e não dependem de rollback automático. Runtime nunca executa migrations. CI interrompe cada migration artificialmente e confirma que roles runtime continuam fail-closed.
+
+Na fatia materializada da Sprint 2, o schema lógico v3 foi dividido em quatro migrations Goose auditáveis: `000003_reliability_schema`, `000004_reliability_claim_transition`, `000005_reliability_claim_entrypoint` e `000006_reliability_finalize`. As versões físicas 3–5 adicionam apenas estruturas e funções v3 internas, sem retirar entrypoints ou grants v2. A `000006` troca claim, finalize, grants e `wde.schema_version=3` na mesma transação. No `down`, a própria `000006` restaura contratos v2 e `schema_version=2` atomicamente antes que migrations anteriores removam os helpers. Assim, cada boundary anuncia somente um contrato completo; o runtime v3 recusa readiness nas versões lógicas v2.
 
 ## 12. Testes obrigatórios do schema
 

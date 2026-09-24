@@ -10,21 +10,86 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type PostgresStore struct{ pool *pgxpool.Pool }
+const defaultClaimTimeout = 2 * time.Second
 
-func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore { return &PostgresStore{pool: pool} }
-func (s *PostgresStore) Claim(ctx context.Context, workerID, attemptID uuid.UUID, lease time.Duration) (Claim, bool, error) {
-	var c Claim
-	err := s.pool.QueryRow(ctx, `SELECT workspace_id,delivery_id,event_id,endpoint_id,fencing_token,scheme,host_ascii,port,target_cipher_format_version,target_ciphertext,target_nonce,target_kek_version,event_type,payload_cipher_format_version,payload_ciphertext,payload_nonce,payload_kek_version,key_id,secret_version_id,secret_cipher_format_version,secret_ciphertext,secret_nonce,secret_kek_version FROM wde.claim_delivery($1,$2,$3)`, workerID, attemptID, lease).Scan(&c.WorkspaceID, &c.DeliveryID, &c.EventID, &c.EndpointID, &c.FencingToken, &c.Scheme, &c.Host, &c.Port, &c.Target.FormatVersion, &c.Target.Ciphertext, &c.Target.Nonce, &c.Target.KEKVersion, &c.EventType, &c.Payload.FormatVersion, &c.Payload.Ciphertext, &c.Payload.Nonce, &c.Payload.KEKVersion, &c.KeyID, &c.SecretVersionID, &c.Secret.FormatVersion, &c.Secret.Ciphertext, &c.Secret.Nonce, &c.Secret.KEKVersion)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Claim{}, false, nil
-	}
-	return c, err == nil, err
+type PostgresStore struct {
+	pool         *pgxpool.Pool
+	claimTimeout time.Duration
 }
-func (s *PostgresStore) Finalize(ctx context.Context, c Claim, workerID uuid.UUID, success bool, status *int16, duration int, category string) (bool, error) {
+
+func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
+	return &PostgresStore{pool: pool, claimTimeout: defaultClaimTimeout}
+}
+
+func (s *PostgresStore) ClaimBatch(ctx context.Context, request ClaimRequest) ([]Claim, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	claimCtx, cancel := context.WithTimeout(ctx, s.claimTimeout)
+	defer cancel()
+	attemptIDs := make([]uuid.UUID, request.Limit)
+	for index := range attemptIDs {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return nil, err
+		}
+		attemptIDs[index] = id
+	}
+	rows, err := s.pool.Query(claimCtx, `SELECT workspace_id,delivery_id,event_id,endpoint_id,
+		fencing_token,attempt_number,max_attempts,scheme,host_ascii,port,
+		target_cipher_format_version,target_ciphertext,target_nonce,target_kek_version,
+		event_type,payload_cipher_format_version,payload_ciphertext,payload_nonce,payload_kek_version,
+		key_id,secret_version_id,secret_cipher_format_version,secret_ciphertext,secret_nonce,secret_kek_version
+		FROM wde.claim_deliveries($1,$2,$3,$4,$5,$6)`, request.WorkerID, attemptIDs,
+		request.LeaseTTL, request.Limit, request.WorkspaceLimit, request.EndpointLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	claims := make([]Claim, 0, request.Limit)
+	for rows.Next() {
+		claim, err := scanClaim(rows)
+		if err != nil {
+			return nil, err
+		}
+		claims = append(claims, claim)
+	}
+	return claims, rows.Err()
+}
+
+func scanClaim(row pgx.Row) (Claim, error) {
+	var c Claim
+	err := row.Scan(&c.WorkspaceID, &c.DeliveryID, &c.EventID, &c.EndpointID,
+		&c.FencingToken, &c.AttemptNumber, &c.MaxAttempts, &c.Scheme, &c.Host, &c.Port,
+		&c.Target.FormatVersion, &c.Target.Ciphertext, &c.Target.Nonce, &c.Target.KEKVersion,
+		&c.EventType, &c.Payload.FormatVersion, &c.Payload.Ciphertext, &c.Payload.Nonce,
+		&c.Payload.KEKVersion, &c.KeyID, &c.SecretVersionID, &c.Secret.FormatVersion,
+		&c.Secret.Ciphertext, &c.Secret.Nonce, &c.Secret.KEKVersion)
+	return c, err
+}
+
+func (s *PostgresStore) Finalize(ctx context.Context, c Claim, workerID uuid.UUID, result Result) (bool, error) {
+	result = normalizeResult(result)
 	var changed bool
-	err := s.pool.QueryRow(ctx, `SELECT wde.finalize_delivery($1,$2,$3,$4,$5,$6,$7,$8)`, c.WorkspaceID, c.DeliveryID, workerID, c.FencingToken, success, status, duration, category).Scan(&changed)
+	var retryDelay any
+	if result.Disposition == DispositionRetry {
+		retryDelay = result.RetryAfter
+	}
+	err := s.pool.QueryRow(ctx, `SELECT wde.finalize_delivery($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		c.WorkspaceID, c.DeliveryID, workerID, c.FencingToken, result.Disposition,
+		result.HTTPStatus, result.DurationMS, result.Category, retryDelay).Scan(&changed)
 	return changed, err
+}
+
+func normalizeResult(result Result) Result {
+	if result.HTTPStatus == nil || (*result.HTTPStatus >= 100 && *result.HTTPStatus <= 599) {
+		return result
+	}
+	result.HTTPStatus = nil
+	result.Disposition = DispositionPermanent
+	result.Category = "invalid_http_status"
+	result.RetryAfter = 0
+	return result
 }
 func (s *PostgresStore) Get(ctx context.Context, workspaceID, deliveryID uuid.UUID) (Details, error) {
 	tx, err := s.pool.Begin(ctx)

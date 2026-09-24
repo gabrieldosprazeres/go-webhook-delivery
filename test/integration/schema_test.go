@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -17,16 +18,38 @@ import (
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/cryptobox"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestCredentialBootstrapIsSerializedAndRevocable(t *testing.T) {
 	apiURL := os.Getenv("WDE_TEST_API_DATABASE_URL")
 	adminURL := os.Getenv("WDE_TEST_ADMIN_DATABASE_URL")
-	if apiURL == "" || adminURL == "" {
+	superURL := os.Getenv("WDE_TEST_SUPERUSER_DATABASE_URL")
+	if apiURL == "" || adminURL == "" || superURL == "" {
 		t.Skip("integration database URLs are not configured")
 	}
 	ctx := context.Background()
+	super := mustPool(t, ctx, superURL)
+	defer super.Close()
+	databaseName := "wde_bootstrap_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	identifier := pgx.Identifier{databaseName}.Sanitize()
+	if _, err := super.Exec(ctx, "CREATE DATABASE "+identifier+" OWNER wde_owner"); err != nil {
+		t.Fatal(err)
+	}
+	defer dropBoundaryDatabase(t, ctx, super, databaseName, identifier)
+	if _, err := super.Exec(ctx, "REVOKE ALL ON DATABASE "+identifier+
+		" FROM PUBLIC; GRANT CONNECT ON DATABASE "+identifier+" TO wde_migrator,wde_api,wde_worker,wde_admin"); err != nil {
+		t.Fatal(err)
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGooseBoundary(t, ctx, root, databaseURL(t, superURL, databaseName), "up-to", 6)
+	apiURL = databaseURL(t, apiURL, databaseName)
+	adminURL = databaseURL(t, adminURL, databaseName)
+
 	admin := mustPool(t, ctx, adminURL)
 	defer admin.Close()
 	api := mustPool(t, ctx, apiURL)
@@ -111,6 +134,8 @@ func TestTenantContextAndAppendOnlyACL(t *testing.T) {
 	worker := mustPool(t, ctx, workerURL)
 	defer worker.Close()
 	assertTenantFunctionACL(t, ctx, admin)
+	assertReliabilityFunctionACL(t, ctx, admin)
+	assertClaimInputValidation(t, ctx, worker)
 	workspaceID, endpointID := uuid.New(), uuid.New()
 	if _, err := admin.Exec(ctx, `INSERT INTO wde.workspaces(id,name) VALUES($1,'rls-test')`, workspaceID); err != nil {
 		t.Fatal(err)
@@ -161,6 +186,117 @@ func TestTenantContextAndAppendOnlyACL(t *testing.T) {
 	}
 	if _, err = suspendedTx.Exec(ctx, `INSERT INTO wde.endpoints(id,workspace_id,scheme,host_ascii,port,target_cipher_format_version,target_ciphertext,target_nonce,target_kek_version) VALUES($1,$2,'http','127.0.0.1',8081,1,$3,$4,1)`, uuid.New(), workspaceID, make([]byte, 16), make([]byte, 12)); err == nil {
 		t.Fatal("suspended workspace inserted endpoint")
+	}
+}
+
+func assertClaimInputValidation(t *testing.T, ctx context.Context, worker *pgxpool.Pool) {
+	t.Helper()
+	workerID, first, second := uuid.New(), uuid.New(), uuid.New()
+	queries := []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{"cardinality", `SELECT count(*) FROM wde.claim_deliveries($1,ARRAY[$2,$3]::uuid[],interval '20 seconds',1,1,1)`, []any{workerID, first, second}},
+		{"lower bound", `SELECT count(*) FROM wde.claim_deliveries($1,array_fill($2::uuid,ARRAY[1],ARRAY[0]),interval '20 seconds',1,1,1)`, []any{workerID, first}},
+		{"duplicate", `SELECT count(*) FROM wde.claim_deliveries($1,ARRAY[$2,$2]::uuid[],interval '20 seconds',2,1,1)`, []any{workerID, first}},
+	}
+	for _, query := range queries {
+		var count int
+		if err := worker.QueryRow(ctx, query.sql, query.args...).Scan(&count); err == nil {
+			t.Fatalf("%s claim input unexpectedly accepted", query.name)
+		}
+	}
+}
+
+func assertReliabilityFunctionACL(t *testing.T, ctx context.Context, admin *pgxpool.Pool) {
+	t.Helper()
+	functions := []struct {
+		signature     string
+		workerExecute bool
+	}{
+		{"wde.claim_deliveries(uuid,uuid[],interval,integer,integer,integer)", true},
+		{"wde.finalize_delivery(uuid,uuid,uuid,bigint,text,smallint,integer,text,interval)", true},
+		{"wde.select_delivery_candidate(integer,integer,jsonb,jsonb)", false},
+		{"wde.claim_one_delivery(uuid,uuid,interval,integer,integer,jsonb,jsonb)", false},
+		{"wde.recover_exhausted_deliveries(integer)", false},
+	}
+	for _, function := range functions {
+		var owner string
+		var securityDefiner, publicExecute, workerExecute, apiExecute, adminExecute bool
+		var settings []string
+		err := admin.QueryRow(ctx, `SELECT pg_get_userbyid(p.proowner),p.prosecdef,
+			COALESCE(p.proconfig,ARRAY[]::text[]),EXISTS (SELECT 1 FROM aclexplode(p.proacl) acl
+			WHERE acl.grantee=0 AND acl.privilege_type='EXECUTE'),
+			has_function_privilege('wde_worker',p.oid,'EXECUTE'),
+			has_function_privilege('wde_api',p.oid,'EXECUTE'),
+			has_function_privilege('wde_admin',p.oid,'EXECUTE')
+			FROM pg_proc p WHERE p.oid=to_regprocedure($1)`, function.signature).Scan(
+			&owner, &securityDefiner, &settings, &publicExecute, &workerExecute, &apiExecute, &adminExecute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if owner != "wde_worker_executor" || !securityDefiner || publicExecute ||
+			workerExecute != function.workerExecute || apiExecute || adminExecute ||
+			len(settings) != 1 || settings[0] != "search_path=pg_catalog" {
+			t.Fatalf("%s owner=%s definer=%v settings=%v public=%v worker=%v api=%v admin=%v",
+				function.signature, owner, securityDefiner, settings, publicExecute, workerExecute, apiExecute, adminExecute)
+		}
+	}
+	var workerLegacyExecute, executorCanCreate bool
+	if err := admin.QueryRow(ctx, `SELECT
+		has_function_privilege('wde_worker','wde.claim_delivery_v2(uuid,uuid,interval)','EXECUTE'),
+		has_schema_privilege('wde_worker_executor','wde','CREATE')`).Scan(
+		&workerLegacyExecute, &executorCanCreate); err != nil {
+		t.Fatal(err)
+	}
+	if workerLegacyExecute || executorCanCreate {
+		t.Fatalf("legacy execute=%v executor create=%v", workerLegacyExecute, executorCanCreate)
+	}
+	assertReliabilityObjectACL(t, ctx, admin)
+}
+
+func assertReliabilityObjectACL(t *testing.T, ctx context.Context, admin *pgxpool.Pool) {
+	t.Helper()
+	var owner string
+	var executorUsage, workerUsage, apiUsage, adminUsage, schedulerTableExists bool
+	err := admin.QueryRow(ctx, `SELECT pg_get_userbyid(c.relowner),
+		has_sequence_privilege('wde_worker_executor','wde.delivery_claim_sequence','USAGE'),
+		has_sequence_privilege('wde_worker','wde.delivery_claim_sequence','USAGE'),
+		has_sequence_privilege('wde_api','wde.delivery_claim_sequence','USAGE'),
+		has_sequence_privilege('wde_admin','wde.delivery_claim_sequence','USAGE'),
+		to_regclass('wde.delivery_scheduler_state') IS NOT NULL
+		FROM pg_class c WHERE c.oid='wde.delivery_claim_sequence'::regclass`).Scan(
+		&owner, &executorUsage, &workerUsage, &apiUsage, &adminUsage, &schedulerTableExists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner != "wde_worker_executor" || !executorUsage || workerUsage || apiUsage || adminUsage || schedulerTableExists {
+		t.Fatalf("sequence owner=%s executor=%v worker=%v api=%v admin=%v old_table=%v",
+			owner, executorUsage, workerUsage, apiUsage, adminUsage, schedulerTableExists)
+	}
+	var workspaceRLS, endpointRLS, workspaceUpdate, endpointUpdate, workerWorkspaceUpdate bool
+	var workspacePolicy, endpointPolicy bool
+	err = admin.QueryRow(ctx, `SELECT
+		(SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid='wde.workspaces'::regclass),
+		(SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid='wde.endpoint_runtime'::regclass),
+		has_column_privilege('wde_worker_executor','wde.workspaces','last_delivery_claim_sequence','UPDATE'),
+		has_column_privilege('wde_worker_executor','wde.endpoint_runtime','last_delivery_claim_sequence','UPDATE'),
+		has_column_privilege('wde_worker','wde.workspaces','last_delivery_claim_sequence','UPDATE'),
+		EXISTS (SELECT 1 FROM pg_policy WHERE polrelid='wde.workspaces'::regclass
+			AND polname='workspaces_worker_fairness'),
+		EXISTS (SELECT 1 FROM pg_policy WHERE polrelid='wde.endpoint_runtime'::regclass
+			AND polname='endpoint_runtime_worker')`).Scan(
+		&workspaceRLS, &endpointRLS, &workspaceUpdate, &endpointUpdate, &workerWorkspaceUpdate,
+		&workspacePolicy, &endpointPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !workspaceRLS || !endpointRLS || !workspaceUpdate || !endpointUpdate || workerWorkspaceUpdate ||
+		!workspacePolicy || !endpointPolicy {
+		t.Fatalf("RLS workspace=%v endpoint=%v updates workspace=%v endpoint=%v worker=%v policies=%v/%v",
+			workspaceRLS, endpointRLS, workspaceUpdate, endpointUpdate, workerWorkspaceUpdate,
+			workspacePolicy, endpointPolicy)
 	}
 }
 
@@ -304,7 +440,9 @@ func TestClaimWithoutCompleteSnapshotDoesNotMutateDelivery(t *testing.T) {
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := delivery.NewPostgresStore(worker).Claim(ctx, uuid.New(), uuid.New(), 30*time.Second); err != nil {
+	if _, err := delivery.NewPostgresStore(worker).ClaimBatch(ctx, delivery.ClaimRequest{
+		WorkerID: uuid.New(), LeaseTTL: 30 * time.Second, Limit: 1, WorkspaceLimit: 1, EndpointLimit: 1,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	checkTx, err := api.Begin(ctx)

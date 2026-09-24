@@ -46,6 +46,16 @@ type Config struct {
 	IngressTLSTerminated  bool
 	EnablePprof           bool
 	AllowHTTPDestinations bool
+	WorkerConcurrency     int
+	WorkerClaimBatchSize  int
+	WorkerWorkspaceLimit  int
+	WorkerEndpointLimit   int
+	WorkerPollInterval    time.Duration
+	WorkerClaimTimeout    time.Duration
+	WorkerRequestTimeout  time.Duration
+	WorkerLeaseTTL        time.Duration
+	WorkerRetryBase       time.Duration
+	WorkerRetryCap        time.Duration
 	Secrets               SecretFiles
 }
 
@@ -98,6 +108,12 @@ func defaults(service Service) (Config, error) {
 		cfg.HTTPAddr = "127.0.0.1:8081"
 	case ServiceWorker:
 		cfg.OperationalAddr = "127.0.0.1:9091"
+		cfg.WorkerConcurrency, cfg.WorkerClaimBatchSize = 8, 8
+		cfg.WorkerWorkspaceLimit, cfg.WorkerEndpointLimit = 2, 2
+		cfg.WorkerPollInterval, cfg.WorkerClaimTimeout = 250*time.Millisecond, 200*time.Millisecond
+		cfg.WorkerRequestTimeout = 10 * time.Second
+		cfg.WorkerLeaseTTL = 30 * time.Second
+		cfg.WorkerRetryBase, cfg.WorkerRetryCap = time.Second, 15*time.Minute
 	default:
 		return Config{}, errors.New("config: unknown service")
 	}
