@@ -19,13 +19,17 @@ func seedPipelineFixture(t *testing.T, ctx context.Context, admin, super *pgxpoo
 		fixture.victimWorkspace, fixture.attackerWorkspace); err != nil {
 		t.Fatal(err)
 	}
+	allScopes := []string{"endpoints:write", "events:write", "deliveries:read", "deliveries:retry"}
 	fixture.victimToken = insertPipelineCredential(t, ctx, admin, materials,
-		fixture.victimWorkspace, []string{"deliveries:read", "deliveries:retry"})
+		fixture.victimWorkspace, allScopes)
 	fixture.attackerToken = insertPipelineCredential(t, ctx, admin, materials,
-		fixture.attackerWorkspace, []string{"deliveries:read", "deliveries:retry"})
+		fixture.attackerWorkspace, allScopes)
 	fixture.limitedToken = insertPipelineCredential(t, ctx, admin, materials,
 		fixture.attackerWorkspace, []string{"deliveries:read"})
+	fixture.eventOnlyToken = insertPipelineCredential(t, ctx, admin, materials,
+		fixture.attackerWorkspace, []string{"events:write"})
 	endpointID, firstEventID, secondEventID := uuid.New(), uuid.New(), uuid.New()
+	fixture.endpointID = endpointID
 	if _, err := super.Exec(ctx, `INSERT INTO wde.endpoints
 		(id,workspace_id,scheme,host_ascii,port,target_cipher_format_version,target_ciphertext,target_nonce,target_kek_version)
 		VALUES($1,$2,'http','127.0.0.1',8081,1,$3,$4,1)`, endpointID, fixture.victimWorkspace,

@@ -20,9 +20,9 @@ import (
 )
 
 type pipelineFixture struct {
-	victimToken, attackerToken, limitedToken string
-	victimWorkspace, attackerWorkspace       uuid.UUID
-	deliveryID                               uuid.UUID
+	victimToken, attackerToken, limitedToken, eventOnlyToken string
+	victimWorkspace, attackerWorkspace                       uuid.UUID
+	deliveryID, endpointID                                   uuid.UUID
 }
 
 func TestProductionRoutePipelineBoundsAuthScopeAndCrossTenantQuota(t *testing.T) {
@@ -123,6 +123,57 @@ func TestProductionRoutePipelineBoundsAuthScopeAndCrossTenantQuota(t *testing.T)
 			fixture.victimToken, "", "")
 		assertPipelineStatus(t, invalid, http.StatusBadRequest, "invalid_page")
 	})
+}
+
+func TestEveryProductionRouteEnforcesCredentialScopeAndTenant(t *testing.T) {
+	ctx, api, admin, super := pipelinePools(t)
+	defer api.Close()
+	defer admin.Close()
+	defer super.Close()
+	materials, err := cryptobox.Load(config.ProfileTest, config.SecretFiles{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := seedPipelineFixture(t, ctx, admin, super, materials)
+	server := httptest.NewServer(newPublicServer(pipelineConfig(t,
+		os.Getenv("WDE_TEST_API_DATABASE_URL")), api, materials).Handler)
+	defer server.Close()
+	randomID := uuid.New().String()
+	tests := []struct {
+		name, path, body, key, wrongToken string
+	}{
+		{"create endpoint", "/v1/endpoints", `{"url":"http://127.0.0.1:8081/success","event_types":["matrix.test"]}`, "", fixture.limitedToken},
+		{"get endpoint", "/v1/endpoints/" + randomID, "", "", fixture.eventOnlyToken},
+		{"rotate endpoint", "/v1/endpoints/" + randomID + "/secret-rotations", `{"overlap_seconds":3600}`, "matrix-rotate", fixture.limitedToken},
+		{"publish event", "/v1/events", `{"type":"matrix.test","data":{"safe":true}}`, "matrix-event", fixture.limitedToken},
+		{"list deliveries", "/v1/deliveries", "", "", fixture.eventOnlyToken},
+		{"get delivery", "/v1/deliveries/" + randomID, "", "", fixture.eventOnlyToken},
+		{"replay delivery", "/v1/deliveries/" + randomID + "/replays", `{"reason":"matrix"}`, "matrix-replay", fixture.limitedToken},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			unauthenticated := pipelineRequest(t, server.URL+test.path, "", test.key, test.body)
+			assertPipelineStatus(t, unauthenticated, http.StatusUnauthorized, "unauthorized")
+			wrong := pipelineRequest(t, server.URL+test.path, test.wrongToken, test.key+"-wrong", test.body)
+			assertPipelineStatus(t, wrong, http.StatusForbidden, "insufficient_scope")
+			correct := pipelineRequest(t, server.URL+test.path, fixture.victimToken, test.key+"-correct", test.body)
+			defer correct.Body.Close()
+			if correct.StatusCode == http.StatusUnauthorized || correct.StatusCode == http.StatusForbidden {
+				t.Fatalf("required scope was rejected: status=%d body=%s", correct.StatusCode, readPipelineBody(t, correct))
+			}
+		})
+	}
+
+	crossTenant := []struct{ path, body, key string }{
+		{"/v1/endpoints/" + fixture.endpointID.String(), "", ""},
+		{"/v1/endpoints/" + fixture.endpointID.String() + "/secret-rotations", `{"overlap_seconds":3600}`, "cross-rotate"},
+		{"/v1/deliveries/" + fixture.deliveryID.String(), "", ""},
+		{"/v1/deliveries/" + fixture.deliveryID.String() + "/replays", `{"reason":"cross tenant"}`, "cross-replay"},
+	}
+	for _, test := range crossTenant {
+		response := pipelineRequest(t, server.URL+test.path, fixture.attackerToken, test.key, test.body)
+		assertPipelineStatus(t, response, http.StatusNotFound, "not_found")
+	}
 }
 
 func pipelineConfig(t *testing.T, databaseURL string) config.Config {

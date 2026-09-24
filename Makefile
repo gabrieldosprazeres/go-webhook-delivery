@@ -2,8 +2,9 @@
 
 GO ?= go
 
-.PHONY: help fmt fmt-check tidy-check test integration race vet staticcheck vuln openapi-lint build check \
-	migration-validate migrate-up migrate-status compose-config compose-up compose-demo compose-down quickstart
+.PHONY: help fmt fmt-check tidy-check test integration adversarial race vet staticcheck vuln secret-scan \
+	openapi-lint build check migration-validate migrate-up migrate-status compose-config compose-up \
+	compose-demo compose-down quickstart benchmark soak images supply-chain container-smoke rollback-rehearsal
 
 help: ## Lista os comandos disponiveis.
 	@awk 'BEGIN {FS = ":.*##"; printf "Uso: make <alvo>\n\n"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -25,9 +26,12 @@ integration: ## Executa schema, concorrencia e E2E; exige as quatro WDE_TEST_*_D
 	$(GO) test ./test/integration -run '^TestCredentialBootstrapIsSerializedAndRevocable$$' -count=1 -v
 	$(GO) test ./test/integration -run '^(TestTenantContextAndAppendOnlyACL|TestConcurrentIdempotency|TestClaimWithoutCompleteSnapshotDoesNotMutateDelivery|TestEndpointEventWorkerChaosLabSucceeded|TestMigrationBoundariesRemainFailClosed|TestBatchClaimFairnessAndConcurrentWorkers|TestLockedWorkspaceDoesNotBlockIndependentClaim|TestClaimPlanUsesReadyIndexAtRepresentativeScale|TestPersistentFairnessAcrossSingleSlotCycles|TestPersistentFairnessWithConcurrentSingleSlotWorkers|TestEndpointCapacityDoesNotStarveHealthyEndpoint|TestLeaseRecoveryFencingAndAbandonedAttempt|TestRetryHistoryDeadLetterAndNeverMaxPlusOne|TestRepeatedCrashesStopAtMaximumAttempts|TestHostileHTTPStatusDoesNotBreakFinalizeOrNextTenant)$$' -count=1 -v
 	$(GO) test ./test/integration -run '^(TestTenantTransactionDoesNotLeakAfterCommitRollbackOrPanic|TestPersistentQuotaIsAtomicAcrossDimensionsRestartAndExpiry|TestPersistentQuotaGlobalBucketContentionIsExact|TestFanoutAndPaginationLimitsAreEnforced|TestReplayGenerationIsConcurrentIdempotentAndPreservesHistory|TestReplayConflictAndPurgedPayloadFailClosed|TestReplayHTTPContractScopeAndTenantIsolation|TestOperationsACLAndAuditSnapshotsAreImmutable)$$' -count=1 -v
-	$(GO) test ./test/integration -run '^(TestSecretRotationIsConcurrentIdempotentAndDualSigns|TestExpiredRotationIdempotencySurvivesSecretPurge|TestSecretStateAndTemporalConstraintsFailClosedForAPIAndOwner|TestPayloadPurgeFencesWorkerAndBlocksReplay|TestMaintenanceBatchesRejectNullAndEnforcePhysicalCap|TestRetentionRunnerDrainsLargeExpiredBucketBacklog|TestRetentionBacklogExcludesParentsBlockedByLiveChildren|TestMetadataRetentionPurgesGraphCommandsAndExpiredAudit|TestRestoreQuarantineRevokesSnapshotBeforeReadiness|TestWorkspacePurgePreservesTombstoneAndAudit|TestWorkspacePurgeSerializesRotationAndRewindsLateChildren|TestDataSecurityFunctionsAndRolesAreLeastPrivilege|TestQueueMetricsAreAggregateAndWorkerOnly)$$' -count=1 -v
-	$(GO) test ./cmd/api -run '^TestProductionRoutePipelineBoundsAuthScopeAndCrossTenantQuota$$' -count=1 -v
+	$(GO) test ./test/integration -run '^(TestSecretRotationIsConcurrentIdempotentAndDualSigns|TestExpiredRotationIdempotencySurvivesSecretPurge|TestSecretStateAndTemporalConstraintsFailClosedForAPIAndOwner|TestPayloadPurgeFencesWorkerAndBlocksReplay|TestMaintenanceBatchesRejectNullAndEnforcePhysicalCap|TestRetentionRunnerDrainsLargeExpiredBucketBacklog|TestRetentionBacklogExcludesParentsBlockedByLiveChildren|TestMetadataRetentionPurgesGraphCommandsAndExpiredAudit|TestRestoreQuarantineRevokesSnapshotBeforeReadiness|TestWorkspacePurgePreservesTombstoneAndAudit|TestWorkspacePurgeSerializesRotationAndRewindsLateChildren|TestDataSecurityFunctionsAndRolesAreLeastPrivilege|TestQueueMetricsAreAggregateAndWorkerOnly|TestQueueMetricsDowngradeGuardIsAtomicAndSerialized)$$' -count=1 -v
+	$(GO) test ./cmd/api -run '^(TestProductionRoutePipelineBoundsAuthScopeAndCrossTenantQuota|TestEveryProductionRouteEnforcesCredentialScopeAndTenant)$$' -count=1 -v
 	$(GO) test ./cmd/worker -run '^TestWorkerProcessSIGTERM$$' -count=1 -v
+
+adversarial: ## Executa toda a matriz adversarial em serie e falha se houver qualquer skip.
+	./scripts/adversarial.sh
 
 race: ## Executa todos os testes com o race detector.
 	$(GO) test -race ./...
@@ -40,6 +44,9 @@ staticcheck: ## Executa o Staticcheck pinado no modulo.
 
 vuln: ## Verifica vulnerabilidades alcancaveis no codigo Go.
 	$(GO) tool govulncheck ./...
+
+secret-scan: ## Procura segredos no historico Git com Gitleaks pinado e verificado.
+	./scripts/secret-scan.sh
 
 openapi-lint: ## Carrega, resolve referencias e valida semanticamente o contrato OpenAPI.
 	$(GO) test ./api -run '^TestOpenAPIContract$$' -count=1
@@ -75,5 +82,27 @@ compose-down: ## Encerra os containers preservando o volume PostgreSQL.
 
 quickstart: ## Executa a demonstracao local completa em ambiente efemero.
 	./scripts/quickstart.sh
+
+benchmark: ## Mede ingestao e delivery reais em PG17; configure WDE_BENCH_OUTPUT para persistir JSON.
+	./scripts/benchmark.sh
+
+soak: ## Executa carga bounded prolongada com amostras de memoria e backlog.
+	WDE_BENCH_MODE=soak WDE_BENCH_ROUNDS=1 WDE_BENCH_EVENTS=$${WDE_SOAK_EVENTS:-3000} WDE_BENCH_CONCURRENCY=$${WDE_SOAK_CONCURRENCY:-4} \
+		WDE_BENCH_TIMEOUT=$${WDE_SOAK_TIMEOUT:-4m} ./scripts/benchmark.sh
+
+images: ## Constroi os quatro artefatos de container com metadados OCI.
+	WDE_VERSION=$${WDE_VERSION:-dev} WDE_REVISION=$${WDE_REVISION:-$$(git rev-parse HEAD)} \
+		docker compose --profile demo build migrate api worker chaoslab
+
+supply-chain: ## Gera SBOM CycloneDX/SPDX e bloqueia High/Critical nas imagens exatas.
+	@test -n "$$WDE_SUPPLY_CHAIN_OUTPUT" || (echo "WDE_SUPPLY_CHAIN_OUTPUT absoluto e obrigatorio" >&2; exit 1)
+	./scripts/supply-chain.sh "$$WDE_SUPPLY_CHAIN_OUTPUT" \
+		webhook-delivery-engine-api webhook-delivery-engine-worker webhook-delivery-engine-chaoslab webhook-delivery-engine-migrate
+
+container-smoke: ## Valida Compose e sobe os containers hardened em ambiente descartavel.
+	./scripts/container-smoke.sh
+
+rollback-rehearsal: ## Prova downgrade fail-closed com dados v5 e recuperacao forward.
+	./scripts/rollback-rehearsal.sh
 
 check: fmt-check tidy-check test race vet staticcheck vuln openapi-lint migration-validate build ## Executa todos os gates locais da implementacao atual.

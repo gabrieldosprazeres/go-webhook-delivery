@@ -24,6 +24,42 @@ func TestPublicListenerDoesNotExposeProbes(t *testing.T) {
 	}
 }
 
+func TestPublicSecurityHeaders(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		hsts bool
+	}{
+		{name: "internal HTTP behind ingress", hsts: true},
+		{name: "local HTTP", hsts: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/missing", nil)
+			publicSecurityHeaders(publicRoutes(), test.hsts).ServeHTTP(response, request)
+
+			expected := map[string]string{
+				"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+				"X-Frame-Options":         "DENY",
+				"X-Content-Type-Options":  "nosniff",
+				"Referrer-Policy":         "no-referrer",
+				"Cache-Control":           "no-store",
+			}
+			for name, value := range expected {
+				if got := response.Header().Get(name); got != value {
+					t.Fatalf("%s=%q, want %q", name, got, value)
+				}
+			}
+			gotHSTS := response.Header().Get("Strict-Transport-Security")
+			if test.hsts && gotHSTS != "max-age=31536000; includeSubDomains" {
+				t.Fatalf("Strict-Transport-Security=%q", gotHSTS)
+			}
+			if !test.hsts && gotHSTS != "" {
+				t.Fatalf("local Strict-Transport-Security=%q", gotHSTS)
+			}
+		})
+	}
+}
+
 func TestCredentialStdoutPolicy(t *testing.T) {
 	if !canWriteCredentialToStdout(config.ProfileLocal, true) {
 		t.Fatal("local TTY should be allowed")
