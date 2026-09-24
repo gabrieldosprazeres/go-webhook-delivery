@@ -69,3 +69,23 @@ func TestDevelopmentPeppersAreDomainSeparated(t *testing.T) {
 		seen[pepper] = name
 	}
 }
+
+func TestMaterialsReadinessRequiresBothPrimaryKeyrings(t *testing.T) {
+	materials, err := Load(config.ProfileTest, config.SecretFiles{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := materials.Ready(); err != nil {
+		t.Fatalf("valid materials are not ready: %v", err)
+	}
+
+	delete(materials.Payload.Keys, materials.Payload.Primary)
+	if err := materials.Ready(); err == nil {
+		t.Fatal("materials without the payload primary key remained ready")
+	}
+	materials, _ = Load(config.ProfileTest, config.SecretFiles{})
+	delete(materials.Signing.Keys, materials.Signing.Primary)
+	if err := materials.Ready(); err == nil {
+		t.Fatal("materials without the signing primary key remained ready")
+	}
+}

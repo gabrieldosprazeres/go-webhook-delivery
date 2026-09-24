@@ -9,7 +9,7 @@ import (
 
 const (
 	defaultShutdownTimeout = 30 * time.Second
-	maxShutdownTimeout     = 2 * time.Minute
+	maxShutdownTimeout     = 30 * time.Second
 	defaultDatabaseTimeout = 5 * time.Second
 	maxDatabaseTimeout     = 30 * time.Second
 )
@@ -58,6 +58,7 @@ type Config struct {
 	WorkerRetryCap        time.Duration
 	Edge                  EdgeConfig
 	Quotas                QuotaConfig
+	Telemetry             TelemetryConfig
 	Secrets               SecretFiles
 }
 
@@ -104,7 +105,7 @@ func defaults(service Service) (Config, error) {
 	cfg := Config{
 		Service: service, Profile: ProfileLocal, Version: "dev", LogLevel: "info",
 		DatabaseTimeout: defaultDatabaseTimeout, ShutdownTimeout: defaultShutdownTimeout,
-		Edge: defaultEdgeConfig(), Quotas: defaultQuotas(),
+		Edge: defaultEdgeConfig(), Quotas: defaultQuotas(), Telemetry: defaultTelemetryConfig(),
 	}
 	switch service {
 	case ServiceAPI:

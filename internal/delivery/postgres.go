@@ -59,6 +59,7 @@ func (s *PostgresStore) ClaimBatch(ctx context.Context, request ClaimRequest) ([
 		if err != nil {
 			return nil, err
 		}
+		claim.AttemptID = attemptIDs[len(claims)]
 		claims = append(claims, claim)
 	}
 	return claims, rows.Err()

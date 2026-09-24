@@ -29,6 +29,7 @@ type Runner struct {
 	workspaceLimit int
 	endpointLimit  int
 	retry          RetryPolicy
+	observer       Observer
 	now            func() time.Time
 }
 
@@ -39,6 +40,7 @@ type RunnerOptions struct {
 	Retry                                                  RetryPolicy
 	Client                                                 *http.Client
 	PollJitter                                             func(time.Duration) time.Duration
+	Observer                                               Observer
 }
 
 func NewRunner(store Store, materials cryptobox.Materials, profile config.Profile, allowHTTP bool, workerID uuid.UUID) *Runner {
@@ -69,7 +71,7 @@ func NewRunnerWithOptions(store Store, materials cryptobox.Materials, profile co
 		leaseTTL: defaults.LeaseTTL,
 		shutdown: defaults.Shutdown, concurrency: defaults.Concurrency,
 		batchSize: defaults.BatchSize, workspaceLimit: defaults.WorkspaceLimit,
-		endpointLimit: defaults.EndpointLimit, retry: defaults.Retry, now: time.Now,
+		endpointLimit: defaults.EndpointLimit, retry: defaults.Retry, observer: opts.Observer, now: time.Now,
 	}
 }
 
@@ -115,7 +117,18 @@ func (r *Runner) ProcessOne(ctx context.Context) (bool, error) {
 	return true, err
 }
 
-func (r *Runner) claim(ctx context.Context, limit int) ([]Claim, error) {
+func (r *Runner) claim(ctx context.Context, limit int) (claims []Claim, err error) {
+	finish := func(int, error) {}
+	if r.observer != nil {
+		ctx, finish = r.observer.StartClaim(ctx, limit)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			finish(0, ErrJobPanic)
+			panic(recovered)
+		}
+		finish(len(claims), err)
+	}()
 	claimCtx, cancel := context.WithTimeout(ctx, r.claimTimeout)
 	defer cancel()
 	return r.store.ClaimBatch(claimCtx, ClaimRequest{
@@ -125,12 +138,42 @@ func (r *Runner) claim(ctx context.Context, limit int) ([]Claim, error) {
 }
 
 func (r *Runner) processClaim(ctx context.Context, claim Claim) error {
-	result := r.deliver(ctx, claim)
+	finish := func(Result, bool, error) {}
+	if r.observer != nil {
+		ctx, finish = r.observer.StartAttempt(ctx, claim)
+	}
+	var result Result
+	var changed bool
+	var finalErr error
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			finalErr = ErrJobPanic
+			finish(result, changed, finalErr)
+			panic(recovered)
+		}
+		finish(result, changed, finalErr)
+	}()
+	result = r.deliver(ctx, claim)
 	if result.Disposition == DispositionRetry {
 		result.RetryAfter = r.retry.Delay(claim.AttemptNumber, result.RetryAfter)
 	}
-	_, err := r.store.Finalize(ctx, claim, r.workerID, result)
-	return err
+	changed, finalErr = r.finalize(ctx, claim, result)
+	return finalErr
+}
+
+func (r *Runner) finalize(ctx context.Context, claim Claim, result Result) (changed bool, err error) {
+	finish := func(bool, error) {}
+	if r.observer != nil {
+		ctx, finish = r.observer.StartFinalization(ctx, claim)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			finish(false, ErrJobPanic)
+			panic(recovered)
+		}
+		finish(changed, err)
+	}()
+	return r.store.Finalize(ctx, claim, r.workerID, result)
 }
 
 func elapsed(start, end time.Time) int {

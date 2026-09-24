@@ -7,6 +7,7 @@ import (
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/cryptobox"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/logging"
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/operational"
 	appruntime "github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/runtime"
 )
 
@@ -18,6 +19,9 @@ func main() {
 }
 
 func run(parent context.Context, args []string) error {
+	if len(args) == 1 && args[0] == "healthcheck" {
+		return operational.CheckReady(parent, environmentAddress("WDE_API_OPERATIONAL_ADDR", "127.0.0.1:9090"))
+	}
 	if len(args) > 0 && args[0] == "credentials" {
 		return runCredentials(parent, args[1:])
 	}
@@ -39,6 +43,9 @@ func run(parent context.Context, args []string) error {
 	})
 	ctx, stop := appruntime.SignalContext(parent)
 	defer stop()
+	shutdown := appruntime.NewShutdownBudget(cfg.ShutdownTimeout)
+	observability := startTelemetry(ctx, cfg, logger)
+	defer stopTelemetry(observability, shutdown, cfg.Telemetry.ExportTimeout, logger)
 	pool, err := openAPIDatabase(ctx, cfg)
 	if err != nil {
 		return err
@@ -48,5 +55,12 @@ func run(parent context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return serveAPI(ctx, cfg, logger, pool, materials)
+	return serveAPI(ctx, cfg, logger, pool, materials, observability, shutdown)
+}
+
+func environmentAddress(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }

@@ -25,6 +25,11 @@ func SignalContext(parent context.Context) (context.Context, context.CancelFunc)
 
 // Serve runs an HTTP server until it fails or its context is cancelled.
 func Serve(ctx context.Context, server *http.Server, listener net.Listener, shutdownTimeout time.Duration) error {
+	return ServeWithBudget(ctx, server, listener, NewShutdownBudget(shutdownTimeout))
+}
+
+// ServeWithBudget runs one server and consumes a shared shutdown deadline.
+func ServeWithBudget(ctx context.Context, server *http.Server, listener net.Listener, budget *ShutdownBudget) error {
 	serveErrors := make(chan error, 1)
 	go func() {
 		serveErrors <- server.Serve(listener)
@@ -35,9 +40,10 @@ func Serve(ctx context.Context, server *http.Server, listener net.Listener, shut
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
+		budget.Start()
 		return err
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		shutdownCtx, cancel := budget.Context(0)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			_ = server.Close()
@@ -53,6 +59,11 @@ func Serve(ctx context.Context, server *http.Server, listener net.Listener, shut
 
 // ServeAll owns multiple HTTP servers and stops every listener when one exits.
 func ServeAll(ctx context.Context, shutdownTimeout time.Duration, servers ...HTTPServer) error {
+	return ServeAllWithBudget(ctx, NewShutdownBudget(shutdownTimeout), servers...)
+}
+
+// ServeAllWithBudget stops all servers against the same absolute deadline.
+func ServeAllWithBudget(ctx context.Context, budget *ShutdownBudget, servers ...HTTPServer) error {
 	if len(servers) == 0 {
 		return nil
 	}
@@ -61,7 +72,7 @@ func ServeAll(ctx context.Context, shutdownTimeout time.Duration, servers ...HTT
 	errorsCh := make(chan error, len(servers))
 	for _, item := range servers {
 		go func() {
-			errorsCh <- Serve(groupCtx, item.Server, item.Listener, shutdownTimeout)
+			errorsCh <- ServeWithBudget(groupCtx, item.Server, item.Listener, budget)
 		}()
 	}
 

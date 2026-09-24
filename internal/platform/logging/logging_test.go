@@ -42,6 +42,16 @@ func TestNewJSONHonorsLevel(t *testing.T) {
 	}
 }
 
+func TestNewJSONRedactsErrorCanaryEvenOnAllowedKey(t *testing.T) {
+	const canary = "CANARY-error-api-key-hmac"
+	var output bytes.Buffer
+	logger := NewJSON(&output, Options{Service: "worker", Version: "test", Environment: "test"})
+	logger.Error("operation failed", slog.Any("code", errors.New(canary)))
+	if strings.Contains(output.String(), canary) || !strings.Contains(output.String(), `"code":"<redacted>"`) {
+		t.Fatalf("error canary was not redacted: %s", output.String())
+	}
+}
+
 func TestNewJSONTruncatesMessagesStringsAndErrors(t *testing.T) {
 	var output bytes.Buffer
 	logger := NewJSON(&output, Options{Service: "api", Version: "test", Environment: "test"})
@@ -56,7 +66,7 @@ func TestNewJSONTruncatesMessagesStringsAndErrors(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	for _, key := range []string{"msg", "request_id", "code"} {
+	for _, key := range []string{"msg", "request_id"} {
 		value, ok := entry[key].(string)
 		if !ok {
 			t.Fatalf("%s is not a string: %#v", key, entry[key])
@@ -64,5 +74,8 @@ func TestNewJSONTruncatesMessagesStringsAndErrors(t *testing.T) {
 		if len(value) > MaxAttributeValueBytes || !strings.HasSuffix(value, "...") {
 			t.Fatalf("%s was not bounded safely: len=%d value=%q", key, len(value), value)
 		}
+	}
+	if entry["code"] != "<redacted>" || strings.Contains(output.String(), longValue) {
+		t.Fatalf("error material was not redacted: %s", output.String())
 	}
 }

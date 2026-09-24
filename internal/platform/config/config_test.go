@@ -358,7 +358,7 @@ func TestProductionRejectsSecretSymlink(t *testing.T) {
 		WorkerPollInterval: 250 * time.Millisecond, WorkerClaimTimeout: 200 * time.Millisecond,
 		WorkerRequestTimeout: 10 * time.Second,
 		WorkerLeaseTTL:       30 * time.Second, WorkerRetryBase: time.Second, WorkerRetryCap: 15 * time.Minute,
-		Edge: defaultEdgeConfig(), Quotas: defaultQuotas(),
+		Edge: defaultEdgeConfig(), Quotas: defaultQuotas(), Telemetry: defaultTelemetryConfig(),
 		Secrets: SecretFiles{PayloadKeyring: link, SigningKeyring: link},
 	}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "symlink") {

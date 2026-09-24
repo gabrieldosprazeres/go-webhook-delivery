@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var ErrRedirect = errors.New("outboundhttp: redirect disabled")
@@ -25,10 +28,16 @@ func (d Dialer) DialContext(ctx context.Context, network, address string) (net.C
 	if err != nil {
 		return nil, ErrPolicy
 	}
-	addresses, err := d.Policy.Resolve(ctx, host)
+	tracer := trace.SpanFromContext(ctx).TracerProvider().Tracer("github.com/gabrieldosprazeres/go-webhook-delivery")
+	resolveCtx, resolveSpan := tracer.Start(ctx, "webhook.destination.resolve", trace.WithSpanKind(trace.SpanKindClient))
+	addresses, err := d.Policy.Resolve(resolveCtx, host)
+	resolveSpan.SetAttributes(attribute.Int("network.peer.address_count", len(addresses)))
 	if err != nil {
+		resolveSpan.SetStatus(codes.Error, "resolution rejected")
+		resolveSpan.End()
 		return nil, err
 	}
+	resolveSpan.End()
 	dial := d.Dial
 	if dial == nil {
 		netDialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
@@ -36,10 +45,15 @@ func (d Dialer) DialContext(ctx context.Context, network, address string) (net.C
 	}
 	var last error
 	for _, ip := range addresses {
-		conn, dialErr := dial(ctx, network, net.JoinHostPort(ip.String(), port))
+		dialCtx, dialSpan := tracer.Start(ctx, "webhook.destination.connect", trace.WithSpanKind(trace.SpanKindClient),
+			trace.WithAttributes(attribute.String("network.transport", network)))
+		conn, dialErr := dial(dialCtx, network, net.JoinHostPort(ip.String(), port))
 		if dialErr == nil {
+			dialSpan.End()
 			return conn, nil
 		}
+		dialSpan.SetStatus(codes.Error, "connection failed")
+		dialSpan.End()
 		last = dialErr
 	}
 	return nil, last

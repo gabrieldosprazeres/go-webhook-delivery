@@ -19,6 +19,14 @@ type Beginner interface {
 // The transaction is always committed or rolled back before its connection returns
 // to the pool, including while unwinding a panic.
 func Within(ctx context.Context, pool Beginner, workspaceID uuid.UUID, fn func(pgx.Tx) error) (err error) {
+	ctx, finishSpan := startTransactionSpan(ctx)
+	defer func() {
+		recovered := recover()
+		finishSpan(err == nil && recovered == nil)
+		if recovered != nil {
+			panic(recovered)
+		}
+	}()
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return err

@@ -55,6 +55,9 @@ services:
       WDE_DATABASE_URL: postgres://wde_api:${WDE_API_DATABASE_PASSWORD:-api-local-only}@postgres:5432/wde?sslmode=disable
       WDE_SHUTDOWN_TIMEOUT: ${WDE_SHUTDOWN_TIMEOUT:-30s}
       WDE_DATABASE_TIMEOUT: ${WDE_DATABASE_TIMEOUT:-5s}
+      WDE_OTEL_EXPORTER_OTLP_ENDPOINT: ${WDE_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      WDE_OTEL_EXPORT_TIMEOUT: ${WDE_OTEL_EXPORT_TIMEOUT:-5s}
+      WDE_OTEL_TRACE_SAMPLE_RATIO: ${WDE_OTEL_TRACE_SAMPLE_RATIO:-0.1}
       WDE_ALLOW_HTTP_DESTINATIONS: "true"
       WDE_EDGE_MAX_IN_FLIGHT: ${WDE_EDGE_MAX_IN_FLIGHT:-256}
       WDE_EDGE_GLOBAL: ${WDE_EDGE_GLOBAL:-60000}
@@ -89,6 +92,12 @@ services:
     tmpfs:
       - /tmp:size=16m,mode=1777
     init: true
+    healthcheck:
+      test: [CMD, /service, healthcheck]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
     restart: unless-stopped
 
   worker:
@@ -107,6 +116,9 @@ services:
       WDE_WORKER_OPERATIONAL_ADDR: :9091
       WDE_SHUTDOWN_TIMEOUT: ${WDE_SHUTDOWN_TIMEOUT:-30s}
       WDE_DATABASE_TIMEOUT: ${WDE_DATABASE_TIMEOUT:-5s}
+      WDE_OTEL_EXPORTER_OTLP_ENDPOINT: ${WDE_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      WDE_OTEL_EXPORT_TIMEOUT: ${WDE_OTEL_EXPORT_TIMEOUT:-5s}
+      WDE_OTEL_TRACE_SAMPLE_RATIO: ${WDE_OTEL_TRACE_SAMPLE_RATIO:-0.1}
       WDE_ALLOW_HTTP_DESTINATIONS: "true"
       WDE_WORKER_CONCURRENCY: ${WDE_WORKER_CONCURRENCY:-8}
       WDE_WORKER_CLAIM_BATCH_SIZE: ${WDE_WORKER_CLAIM_BATCH_SIZE:-8}
@@ -127,6 +139,12 @@ services:
     tmpfs:
       - /tmp:size=16m,mode=1777
     init: true
+    healthcheck:
+      test: [CMD, /service, healthcheck]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
     restart: unless-stopped
 
   chaoslab:
@@ -150,6 +168,12 @@ services:
     tmpfs:
       - /tmp:size=16m,mode=1777
     init: true
+    healthcheck:
+      test: [CMD, /service, healthcheck]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 2s
     restart: unless-stopped
 
 volumes:

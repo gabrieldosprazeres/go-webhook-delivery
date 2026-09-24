@@ -15,6 +15,11 @@ type claimCall struct {
 }
 
 func (r *Runner) Run(ctx context.Context) error {
+	if r.observer != nil {
+		r.observer.WorkerActive(true)
+		defer r.observer.WorkerActive(false)
+		defer r.observer.Inflight(0)
+	}
 	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelWork()
 	done := make(chan error, r.concurrency)
@@ -29,6 +34,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			return r.drain(done, active, cancelWork, nil)
 		case err := <-done:
 			active--
+			r.observeInflight(active)
 			if err != nil {
 				cancelWork()
 				return r.drain(done, active, cancelWork, err)
@@ -51,6 +57,7 @@ func (r *Runner) Run(ctx context.Context) error {
 				active++
 				r.startJob(workCtx, claim, done)
 			}
+			r.observeInflight(active)
 			if len(claims) == 0 {
 				if emptyPolls < 32767 {
 					emptyPolls++
@@ -64,6 +71,12 @@ func (r *Runner) Run(ctx context.Context) error {
 				timer.Reset(0)
 			}
 		}
+	}
+}
+
+func (r *Runner) observeInflight(active int) {
+	if r.observer != nil {
+		r.observer.Inflight(active)
 	}
 }
 
@@ -121,6 +134,7 @@ func (r *Runner) drain(done <-chan error, active int, cancel context.CancelFunc,
 		select {
 		case err := <-done:
 			active--
+			r.observeInflight(active)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				result = errors.Join(result, err)
 			}

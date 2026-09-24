@@ -9,9 +9,9 @@ import (
 )
 
 // Handler returns a probe-only HTTP handler. Readiness is evaluated on every call.
-func Handler(readiness func(context.Context) error) http.Handler {
+func Handler(readiness func(context.Context) error, metrics ...http.Handler) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /livez", func(w http.ResponseWriter, _ *http.Request) {
 		writeStatus(w, "ok")
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -21,6 +21,9 @@ func Handler(readiness func(context.Context) error) http.Handler {
 		}
 		writeStatus(w, "ready")
 	})
+	if len(metrics) == 1 && metrics[0] != nil {
+		mux.Handle("GET /metrics", metrics[0])
+	}
 	mux.Handle("/", problem.NotFound())
 	return problem.WithRequestID(mux)
 }

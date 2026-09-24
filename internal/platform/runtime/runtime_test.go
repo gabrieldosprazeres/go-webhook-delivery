@@ -41,3 +41,27 @@ func TestWaitReturnsAfterCancellation(t *testing.T) {
 		t.Fatalf("Wait() error = %v", err)
 	}
 }
+
+func TestShutdownBudgetUsesOneAbsoluteDeadlineAcrossPhases(t *testing.T) {
+	budget := NewShutdownBudget(80 * time.Millisecond)
+	started := time.Now()
+	coreCtx, cancelCore := budget.Context(0)
+	defer cancelCore()
+	time.Sleep(40 * time.Millisecond)
+	flushCtx, cancelFlush := budget.Context(time.Second)
+	defer cancelFlush()
+	coreDeadline, _ := coreCtx.Deadline()
+	flushDeadline, _ := flushCtx.Deadline()
+	if !coreDeadline.Equal(flushDeadline) {
+		t.Fatalf("core deadline=%s flush deadline=%s", coreDeadline, flushDeadline)
+	}
+	<-flushCtx.Done()
+	if elapsed := time.Since(started); elapsed < 70*time.Millisecond || elapsed > 160*time.Millisecond {
+		t.Fatalf("shared deadline elapsed=%s", elapsed)
+	}
+	select {
+	case <-coreCtx.Done():
+	case <-time.After(20 * time.Millisecond):
+		t.Fatal("core context did not expire at shared deadline")
+	}
+}

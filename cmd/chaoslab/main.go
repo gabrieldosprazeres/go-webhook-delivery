@@ -12,6 +12,7 @@ import (
 	chaos "github.com/gabrieldosprazeres/go-webhook-delivery/internal/chaoslab"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/logging"
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/operational"
 	appruntime "github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/runtime"
 )
 
@@ -23,6 +24,9 @@ func main() {
 }
 
 func run(parent context.Context, args []string) error {
+	if len(args) == 1 && args[0] == "healthcheck" {
+		return operational.CheckLive(parent, environmentAddress("WDE_CHAOSLAB_HTTP_ADDR", "127.0.0.1:8081"))
+	}
 	cfg, err := config.Load(config.LoadOptions{Service: config.ServiceChaosLab, Args: args})
 	if err != nil {
 		return err
@@ -42,11 +46,11 @@ func run(parent context.Context, args []string) error {
 	defer stop()
 	server := &http.Server{
 		Handler:           routes(),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    32 << 10,
+		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      25 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    8 << 10,
 	}
 
 	logger.InfoContext(ctx, "service started", slog.String("component", "http"))
@@ -56,6 +60,13 @@ func run(parent context.Context, args []string) error {
 	}
 	logger.Info("service stopped", slog.String("component", "http"))
 	return nil
+}
+
+func environmentAddress(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func routes() http.Handler {

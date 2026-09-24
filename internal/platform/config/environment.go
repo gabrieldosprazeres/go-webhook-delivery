@@ -34,6 +34,9 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 	if err := applyEdgeEnvironment(cfg, lookup); err != nil {
 		return err
 	}
+	if err := applyTelemetryEnvironment(cfg, lookup); err != nil {
+		return err
+	}
 	if cfg.Service == ServiceWorker {
 		if err := applyWorkerEnvironment(cfg, lookup); err != nil {
 			return err
@@ -113,6 +116,9 @@ func applyFlags(cfg *Config, args []string) error {
 	workerLeaseTTL := flags.Duration("worker-lease-ttl", cfg.WorkerLeaseTTL, "delivery lease duration")
 	workerRetryBase := flags.Duration("worker-retry-base", cfg.WorkerRetryBase, "retry exponential base")
 	workerRetryCap := flags.Duration("worker-retry-cap", cfg.WorkerRetryCap, "retry maximum delay")
+	otlpEndpoint := flags.String("otel-exporter-otlp-endpoint", cfg.Telemetry.OTLPEndpoint, "OTLP HTTP trace endpoint")
+	otlpTimeout := flags.Duration("otel-export-timeout", cfg.Telemetry.ExportTimeout, "telemetry export timeout")
+	traceSampleRatio := flags.Float64("otel-trace-sample-ratio", cfg.Telemetry.TraceSampleRatio, "trace sample ratio")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("config: parse flags: %w", err)
 	}
@@ -127,6 +133,8 @@ func applyFlags(cfg *Config, args []string) error {
 	cfg.WorkerPollInterval, cfg.WorkerClaimTimeout = *workerPoll, *workerClaimTimeout
 	cfg.WorkerRequestTimeout = *workerRequestTimeout
 	cfg.WorkerLeaseTTL, cfg.WorkerRetryBase, cfg.WorkerRetryCap = *workerLeaseTTL, *workerRetryBase, *workerRetryCap
+	cfg.Telemetry.OTLPEndpoint, cfg.Telemetry.ExportTimeout = *otlpEndpoint, *otlpTimeout
+	cfg.Telemetry.TraceSampleRatio = *traceSampleRatio
 	return nil
 }
 
