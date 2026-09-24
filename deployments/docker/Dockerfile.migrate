@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1.7
+FROM golang:1.27.1-bookworm AS migration-build
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY db/migrations ./db/migrations
+RUN CGO_ENABLED=0 go build \
+    -tags="no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb" \
+    -trimpath -ldflags="-s -w" \
+    -o /out/goose github.com/pressly/goose/v3/cmd/goose
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=migration-build /out/goose /goose
+COPY db/migrations /migrations
+USER nonroot:nonroot
+ENTRYPOINT ["/goose", "-dir", "/migrations"]

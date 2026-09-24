@@ -1,0 +1,22 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Go build and test artifacts
+/bin/
+/coverage/
+*.coverprofile
+*.test
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+
+# Local databases and temporary files
+*.log
+/tmp/

@@ -1,0 +1,132 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  format-and-modules:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: 1.27.1
+          cache: true
+      - name: Check formatting
+        run: make fmt-check
+      - name: Check module files
+        run: make tidy-check
+      - name: Validate migrations
+        run: make migration-validate
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: 1.27.1
+          cache: true
+      - name: Unit tests
+        run: make test
+
+  race:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: 1.27.1
+          cache: true
+      - name: Race detector
+        run: make race
+
+  analysis:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: 1.27.1
+          cache: true
+      - name: Vet
+        run: make vet
+      - name: Staticcheck
+        run: make staticcheck
+      - name: Vulnerability scan
+        run: make vuln
+
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: 1.27.1
+          cache: true
+      - name: Build binaries
+        run: make build
+
+  compose-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Validate Compose
+        run: docker compose --profile demo config --quiet
+      - name: Build every image target
+        run: docker compose --profile demo build migrate api worker chaoslab
+      - name: Start PostgreSQL and run explicit migration job
+        env:
+          WDE_POSTGRES_PORT: "55432"
+        run: |
+          docker compose --profile core up --detach --wait postgres
+          docker compose --profile core run --rm migrate
+          docker compose --profile core up --detach --no-deps api worker
+      - name: Verify migration, roles and readiness
+        run: |
+          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT wde.schema_version()")" = "1"
+          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_api','wde.schema_metadata','SELECT')")" = "f"
+          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_worker','wde.schema_metadata','SELECT')")" = "f"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/healthz)" = "404"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/readyz)" = "404"
+          curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9090/healthz
+          curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9090/readyz
+          curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9091/healthz
+          curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9091/readyz
+          test "$(docker inspect --format='{{.State.Status}}' webhook-delivery-engine-worker-1)" = "running"
+      - name: Verify dynamic readiness during database loss
+        run: |
+          docker compose --profile core stop postgres
+          curl --fail http://127.0.0.1:9090/healthz
+          curl --fail http://127.0.0.1:9091/healthz
+          ! curl --fail --max-time 10 http://127.0.0.1:9090/readyz
+          ! curl --fail --max-time 10 http://127.0.0.1:9091/readyz
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose --profile demo logs --no-color
+      - name: Stop disposable environment
+        if: always()
+        run: docker compose --profile demo down --volumes --remove-orphans
