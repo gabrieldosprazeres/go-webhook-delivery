@@ -2,7 +2,7 @@
 
 Servico de entrega confiavel de webhooks escrito em Go. O projeto demonstra ingestao idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento multi-tenant, assinatura HMAC, defesa SSRF e operacao observavel.
 
-> Estado atual: Sprint 5 implementada. O engine inclui entrega concorrente, segurança de saída e dados, retenção, métricas Prometheus, traces OpenTelemetry, probes internos e uma demonstração automatizada. O projeto nunca promete `exactly-once`.
+> Estado atual: Sprint 6 implementada e aguardando Code Review/QA/security audit independentes antes da release. O engine inclui entrega concorrente, segurança de saída e dados, retenção, observabilidade, imagens hardened, SBOM/scan e demonstração automatizada. O projeto nunca promete `exactly-once`.
 
 ## Stack
 
@@ -191,8 +191,21 @@ make openapi-lint
 make migration-validate
 make build
 make quickstart
+make adversarial
+make benchmark
+make soak
+make container-smoke
+WDE_SUPPLY_CHAIN_OUTPUT="$(mktemp -d)" make supply-chain
+make secret-scan
 make check
 ```
+
+O benchmark local de referência, após warmup excluído e três rodadas independentes de
+1.000 eventos, superou o alvo de ingestão, mas não o de delivery: medianas de 440,00
+ingestões/s, p95 de ingestão 15,08 ms e 32,77 deliveries/s. O soak concluiu
+3.000/3.000 IDs distintos, sem duplicata, missing, falha ou backlog. Ambiente,
+dispersão, séries de recursos e a divergência estão publicados em
+[Benchmark e soak](docs/benchmark-results.md); esses números não são promessa de SLO.
 
 Para aplicar migrations fora do Compose:
 
@@ -229,5 +242,10 @@ docs/                PRD, arquitetura, ADRs, seguranca, backlog e status
 - [Backlog do MVP](docs/webhook-delivery-engine-backlog.md)
 - [ADRs](docs/adr/)
 - [Status](docs/webhook-delivery-engine-status.md)
+- [Política de segurança](SECURITY.md)
+- [Runbook operacional](docs/operations-runbook.md)
+- [Demonstração de portfólio](docs/demo-runbook.md)
+- [Supply chain e imagens](docs/supply-chain.md)
+- [Checklist de release](docs/release-checklist.md)
 
 Payloads, API keys, HMAC secrets, assinaturas, headers, URLs completas, DSNs e corpos externos nunca devem entrar em logs, traces, metricas ou erros. O logger da fundacao aplica uma allowlist de atributos e possui teste canario contra vazamento.

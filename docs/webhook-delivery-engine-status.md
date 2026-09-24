@@ -1,7 +1,7 @@
 # Status: Webhook Delivery Engine
 
 **Atualizado em:** 2026-09-24
-**Branch:** `feature/sprint-5-observability-demo`
+**Branch:** `feature/sprint-6-hardening-release`
 
 ## Planejamento
 
@@ -315,3 +315,96 @@ Sprint 4 aprovada em Code Review e QA, apta para commit e integração em `main`
 ### Próximo gate
 
 Sprint 5 aprovada em Code Review e QA, apta para commit e integração em `main`; em seguida, iniciar a Sprint 6 — Hardening e release de portfólio.
+
+## Sprint 6 — Hardening e release de portfólio
+
+- ✅ S6-01 — Suite adversarial final — implementada pelo Stack Agent
+- ✅ S6-02 — Benchmarks e profiling — implementada pelo Stack Agent
+- ✅ S6-03 — Containers, SBOM e scan — implementada pelo Stack Agent
+- ✅ S6-04 — Runbook e demonstração — implementada pelo Stack Agent
+- ❌ Code Review independente — rodada 1 reprovada com zero blocker, cinco warnings e
+  uma suggestion
+- ✅ Correções da rodada 1 — implementadas e validadas pelo Stack Agent
+- ✅ Correções da rodada 2 — implementadas; probes focados e gates sem container verdes
+- ⚠️ Rebuild/smoke/SBOM/scan do candidato R2 — pendente após erro de I/O no content
+  store local; os digests anteriores estão stale e não autorizam release
+- ⏳ Re-review, QA e security audit independentes — pendentes
+- ⛔ Tag `v1.0.0` — não criada; bloqueada até os gates independentes e changelog final
+
+### Evidências do Stack Agent
+
+- A matriz HTTP cobre autenticação, scope correto/incorreto e isolamento cross-tenant
+  para todas as sete rotas produtivas; o runner adversarial executa toda a árvore de
+  testes em série e falha diante de qualquer skip.
+- O harness usa PostgreSQL 17 em `tmpfs` e receptor loopback reais, credencial `0600`,
+  HMAC verificado, IDs esperados distintos, estado final do banco e séries de
+  RSS/heap/goroutines/backlog. Warmup separado e três rodadas de 1.000 eventos mediram
+  medianas de 440,00 ingestões/s, p95 de ingestão 15,08 ms e 32,77 deliveries/s. O
+  soak concluiu 3.000/3.000 IDs distintos, zero duplicata/missing/falha/backlog e 283
+  amostras de sistema sem crescimento anômalo; o alvo de 100 deliveries/s não foi
+  atendido e permanece risco residual documentado.
+- API, worker, Chaos Lab e migrator possuem imagens multi-stage pinadas, distroless,
+  non-root/read-only, sem capabilities, com `no-new-privileges` e `tmpfs`. O smoke
+  valida healthchecks, roles/schema e o diff exato de cada filesystem contra a base
+  pinada: somente o binário de serviço, ou Goose e as migrations, podem ser adicionados.
+- Syft 1.52.0 gera CycloneDX/SPDX das imagens por ID imutável; Trivy 0.74.0 bloqueia
+  High/Critical e Gitleaks 8.30.1 examina o histórico. `tools.tsv` preserva versões,
+  assets e checksums esperados/observados, junto à metadata da base Trivy; ferramentas,
+  diretórios e caches efêmeros são removidos depois do gate.
+- `SECURITY.md`, runbook de incidentes/restore/rollback, demonstração, resultados de
+  benchmark, supply chain e checklist de release registram premissas, procedimentos,
+  limitações, trade-offs e riscos residuais sem expor material sensível.
+
+### Correções após Code Review — rodada 1
+
+- A CI executa `make adversarial` com quatro DSNs, falha diante de qualquer skip e
+  inclui a matriz de autenticação, scope e tenant das sete rotas. O alvo nominal
+  `make integration` também inclui essa matriz.
+- O benchmark compara o conjunto exato de `delivery_id`; duplicata não mascara ID
+  ausente. O listener é fechado e seus handlers são drenados antes do snapshot final;
+  cada relatório registra unique/duplicates/missing/unexpected/invalid-signatures e só
+  passa com banco em backlog zero, total exato em `succeeded` e zero falha.
+- Warmup é excluído; benchmark normal exige três rodadas e publica
+  mínimo/máximo/mediana/média/desvio/p95. Soak tem teto hard de 5.000, usa PG17 em
+  `tmpfs`, coleta séries de RSS/heap/goroutines/backlog e falha nos thresholds de
+  crescimento, monotonia ou backlog final.
+- Smoke exporta base e alvo para arquivos verificados e valida API, worker, Chaos Lab e
+  migrator com manifestos canônicos e allowlists positivas diferentes; hash de
+  conteúdo herdado, tipo, modo, UID/GID e destino de link também são comparados.
+  Extras, remoções, alteração de conteúdo/symlink/metadados, traversal, paths
+  malformados e duplicados falham nos probes negativos.
+- O runbook cobre comprometimento de pacote/imagem. `make rollback-rehearsal` prova
+  downgrade/re-upgrade vazio e o guard transacional interno contra workspace,
+  quarentena global e writer concorrente, mantendo Goose 20/schema v5/função/dados
+  intactos. A evidência preserva `tools.tsv`, metadata Trivy e relatório Gitleaks junto
+  de SBOMs/scans.
+
+### Correções após Code Review — rodada 2
+
+- O primeiro `Down` obtém locks incompatíveis com writers e recusa qualquer estado
+  operacional v5, inclusive audit global e controle de restore não-default, antes do
+  primeiro `REVOKE`/`DROP`; o preflight externo continua apenas como UX.
+- O verificador de imagem abandonou denylist: canonicaliza os inventários completos da
+  base pinada e do alvo e exige exatamente o diff positivo esperado por tipo de imagem.
+- O benchmark separa `wait-all-expected` do snapshot: após convergência do banco, fecha
+  o listener, drena handlers e contabiliza callbacks tardios e assinaturas inválidas.
+- PostgreSQL 17 real confirmou downgrade vazio `20→19→20` e bloqueio atômico de
+  workspace, quarentena global e writer concorrente. Os quatro inventários de imagem
+  existentes e os probes negativos do comparador passaram antes de o daemon local
+  apresentar erro de I/O; como a migration 20 mudou, rebuild/smoke/scans finais seguem
+  obrigatórios no próximo ambiente Docker saudável.
+
+### Correção após Code Review — rodada 3
+
+- O inventário somente por path foi substituído por manifesto derivado diretamente do
+  tar exportado. Paths herdados exigem igualdade de tipo, modo, UID/GID, destino de
+  symlink e SHA-256 de arquivo regular. Os SQLs adicionados exigem o hash do checkout;
+  somente os hashes dos binários construídos são wildcard explícita, com todos os seus
+  metadados ainda estritos. A suíte negativa cobre conteúdo no mesmo path, symlink,
+  tipo, modo, owner, extra, missing, traversal e duplicata sem acessar Docker.
+
+### Próximo gate
+
+Executar Code Review, QA e security audit independentes. Somente depois da aprovação e
+do `CHANGELOG.md` final o mantenedor poderá criar `v1.0.0` no commit e nos digests
+exatamente escaneados.

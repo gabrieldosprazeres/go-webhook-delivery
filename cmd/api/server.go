@@ -87,10 +87,26 @@ func newPublicServer(cfg config.Config, pool *pgxpool.Pool, materials cryptobox.
 		telemetry: observability,
 	}
 	return &http.Server{
-		Handler: publicRoutes(deps), ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second,
+		Handler: publicSecurityHeaders(publicRoutes(deps),
+			cfg.Profile == config.ProfileProduction && cfg.IngressTLSTerminated),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second, WriteTimeout: 15 * time.Second,
 		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10,
 	}
+}
+
+func publicSecurityHeaders(next http.Handler, hsts bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		if hsts {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func newOperationalServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool,

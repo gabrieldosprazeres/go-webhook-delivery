@@ -2,7 +2,7 @@ name: webhook-delivery-engine
 
 services:
   postgres:
-    image: postgres:17
+    image: postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
     profiles: [core, demo, test]
     environment:
       POSTGRES_DB: wde
@@ -26,9 +26,13 @@ services:
 
   migrate:
     profiles: [core, demo, test]
+    image: webhook-delivery-engine-migrate:${WDE_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.migrate
+      args:
+        WDE_VERSION: ${WDE_VERSION:-dev}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
     environment:
       GOOSE_DRIVER: postgres
       GOOSE_DBSTRING: postgres://wde_migrator:${WDE_MIGRATOR_PASSWORD:-migrator-local-only}@postgres:5432/wde?sslmode=disable
@@ -37,15 +41,23 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
 
   api:
     profiles: [core, demo]
+    image: webhook-delivery-engine-api:${WDE_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile
       target: runtime
       args:
         SERVICE: api
+        WDE_VERSION: ${WDE_VERSION:-dev}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
     environment:
       WDE_PROFILE: local
       WDE_VERSION: compose
@@ -83,8 +95,8 @@ services:
       WDE_QUOTA_REPLAY_RESOURCE: ${WDE_QUOTA_REPLAY_RESOURCE:-2}
       WDE_QUOTA_REPLAY_WINDOW: ${WDE_QUOTA_REPLAY_WINDOW:-1m}
     ports:
-      - "127.0.0.1:8080:8080"
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:${WDE_API_PORT:-8080}:8080"
+      - "127.0.0.1:${WDE_API_OPS_PORT:-9090}:9090"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -92,6 +104,8 @@ services:
     tmpfs:
       - /tmp:size=16m,mode=1777
     init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     healthcheck:
       test: [CMD, /service, healthcheck]
       interval: 5s
@@ -102,12 +116,15 @@ services:
 
   worker:
     profiles: [core, demo]
+    image: webhook-delivery-engine-worker:${WDE_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile
       target: runtime
       args:
         SERVICE: worker
+        WDE_VERSION: ${WDE_VERSION:-dev}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
     environment:
       WDE_PROFILE: local
       WDE_VERSION: compose
@@ -134,11 +151,13 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - "127.0.0.1:9091:9091"
+      - "127.0.0.1:${WDE_WORKER_OPS_PORT:-9091}:9091"
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
     init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     healthcheck:
       test: [CMD, /service, healthcheck]
       interval: 5s
@@ -149,12 +168,15 @@ services:
 
   chaoslab:
     profiles: [demo]
+    image: webhook-delivery-engine-chaoslab:${WDE_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile
       target: runtime
       args:
         SERVICE: chaoslab
+        WDE_VERSION: ${WDE_VERSION:-dev}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
     environment:
       WDE_PROFILE: local
       WDE_VERSION: compose
@@ -163,11 +185,13 @@ services:
       WDE_SHUTDOWN_TIMEOUT: ${WDE_SHUTDOWN_TIMEOUT:-30s}
       WDE_ALLOW_HTTP_DESTINATIONS: "true"
     ports:
-      - "127.0.0.1:8081:8081"
+      - "127.0.0.1:${WDE_CHAOS_PORT:-8081}:8081"
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
     init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     healthcheck:
       test: [CMD, /service, healthcheck]
       interval: 5s

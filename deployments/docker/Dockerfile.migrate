@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.27.1-bookworm AS migration-build
+FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS migration-build
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -9,9 +9,16 @@ RUN CGO_ENABLED=0 go build \
     -tags="no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb" \
     -trimpath -ldflags="-s -w" \
     -o /out/goose github.com/pressly/goose/v3/cmd/goose
+RUN chmod 0555 /out/goose && find db/migrations -type f -exec chmod 0444 {} \;
 
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=migration-build /out/goose /goose
-COPY db/migrations /migrations
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+ARG WDE_VERSION=dev
+ARG WDE_REVISION=unknown
+LABEL org.opencontainers.image.title="webhook-delivery-migrate" \
+      org.opencontainers.image.version="${WDE_VERSION}" \
+      org.opencontainers.image.revision="${WDE_REVISION}" \
+      org.opencontainers.image.source="https://github.com/gabrieldosprazeres/go-webhook-delivery"
+COPY --from=migration-build --chown=nonroot:nonroot /out/goose /goose
+COPY --from=migration-build --chown=nonroot:nonroot /src/db/migrations /migrations
 USER nonroot:nonroot
 ENTRYPOINT ["/goose", "-dir", "/migrations"]

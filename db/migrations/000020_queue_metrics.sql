@@ -43,6 +43,40 @@ RESET ROLE;
 SET lock_timeout = '5s';
 SET statement_timeout = '30s';
 SET ROLE wde_owner;
+LOCK TABLE wde.schema_metadata,wde.restore_control,wde.workspaces,wde.api_keys,
+    wde.api_key_scopes,wde.endpoints,wde.endpoint_subscriptions,wde.endpoint_runtime,
+    wde.endpoint_secret_versions,wde.events,wde.deliveries,wde.delivery_attempts,
+    wde.audit_events,wde.replay_commands,wde.rate_limit_buckets,
+    wde.secret_rotation_commands,wde.maintenance_jobs,wde.workspace_tombstones
+    IN SHARE ROW EXCLUSIVE MODE;
+DO $guard$
+BEGIN
+    IF (SELECT count(*)<>1 OR bool_or(schema_version<>5) FROM wde.schema_metadata)
+       OR (SELECT count(*)<>1 OR bool_or(state<>'ready' OR generation<>0
+            OR audit_retention_days<>365 OR quarantined_at IS NOT NULL OR reconciled_at IS NOT NULL)
+           FROM wde.restore_control) THEN
+        RAISE EXCEPTION 'unsafe downgrade: non-default v5 control state exists';
+    END IF;
+END
+$guard$;
+SET ROLE wde_maintenance_executor;
+DO $guard$
+BEGIN
+    IF EXISTS (
+            SELECT 1 FROM wde.workspaces UNION ALL SELECT 1 FROM wde.api_keys
+            UNION ALL SELECT 1 FROM wde.api_key_scopes UNION ALL SELECT 1 FROM wde.endpoints
+            UNION ALL SELECT 1 FROM wde.endpoint_subscriptions UNION ALL SELECT 1 FROM wde.endpoint_runtime
+            UNION ALL SELECT 1 FROM wde.endpoint_secret_versions UNION ALL SELECT 1 FROM wde.events
+            UNION ALL SELECT 1 FROM wde.deliveries UNION ALL SELECT 1 FROM wde.delivery_attempts
+            UNION ALL SELECT 1 FROM wde.audit_events UNION ALL SELECT 1 FROM wde.replay_commands
+            UNION ALL SELECT 1 FROM wde.rate_limit_buckets UNION ALL SELECT 1 FROM wde.secret_rotation_commands
+            UNION ALL SELECT 1 FROM wde.maintenance_jobs UNION ALL SELECT 1 FROM wde.workspace_tombstones
+       ) THEN
+        RAISE EXCEPTION 'unsafe downgrade: operational v5 state exists';
+    END IF;
+END
+$guard$;
+SET ROLE wde_owner;
 REVOKE EXECUTE ON FUNCTION wde.delivery_queue_metrics() FROM wde_worker;
 GRANT CREATE ON SCHEMA wde TO wde_worker_executor;
 SET ROLE wde_worker_executor;
