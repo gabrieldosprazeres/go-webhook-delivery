@@ -46,7 +46,7 @@ func TestCredentialBootstrapIsSerializedAndRevocable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runGooseBoundary(t, ctx, root, databaseURL(t, superURL, databaseName), "up-to", 6)
+	runGooseBoundary(t, ctx, root, databaseURL(t, superURL, databaseName), "up-to", 10)
 	apiURL = databaseURL(t, apiURL, databaseName)
 	adminURL = databaseURL(t, adminURL, databaseName)
 
@@ -114,6 +114,16 @@ func TestCredentialBootstrapIsSerializedAndRevocable(t *testing.T) {
 	record, found, err := auth.NewPostgresLookup(api).LookupKey(ctx, parts[2])
 	if err != nil || !found || record.Status != "revoked" {
 		t.Fatalf("found=%v status=%s err=%v", found, record.Status, err)
+	}
+	boundarySuper := mustPool(t, ctx, databaseURL(t, superURL, databaseName))
+	defer boundarySuper.Close()
+	var auditText string
+	if err := boundarySuper.QueryRow(ctx, `SELECT COALESCE(string_agg(row_to_json(a)::text,''),'')
+		FROM wde.audit_events a`).Scan(&auditText); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(auditText, winner.Token) {
+		t.Fatal("credential token leaked into audit events")
 	}
 }
 

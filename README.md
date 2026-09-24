@@ -2,7 +2,7 @@
 
 Servico de entrega confiavel de webhooks escrito em Go. O projeto demonstra ingestao idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento multi-tenant, assinatura HMAC, defesa SSRF e operacao observavel.
 
-> Estado atual: Sprint 2 implementada. Alem do corte vertical, o worker processa batches concorrentes com fairness, recupera leases com fencing, aplica retry exponencial com full jitter e encerra entregas esgotadas em DLQ. O projeto nunca promete `exactly-once`.
+> Estado atual: Sprint 3 implementada. Alem da entrega concorrente confiavel, a API aplica quotas PostgreSQL globais/tenant/chave, pagina consultas, cria replay por geracao e registra acoes sensiveis em auditoria append-only. O projeto nunca promete `exactly-once`.
 
 ## Stack
 
@@ -85,6 +85,10 @@ Principais variaveis:
 | `WDE_WORKER_OPERATIONAL_ADDR` | probes do worker; default `127.0.0.1:9091` |
 | `WDE_CHAOSLAB_HTTP_ADDR` | listener local; default `127.0.0.1:8081` |
 | `WDE_ALLOW_HTTP_DESTINATIONS` | habilita explicitamente destinos HTTP loopback fora de produção |
+| `WDE_EDGE_{MAX_IN_FLIGHT,GLOBAL,ORIGIN,PREFIX,WINDOW,MAX_BUCKETS}` | semáforo e limiter local bounded antes do lookup de credencial |
+| `WDE_QUOTA_<OPERACAO>_{GLOBAL,WORKSPACE,API_KEY}` | limites persistentes por janela para ingestao, escrita de endpoint, consulta e replay |
+| `WDE_QUOTA_REPLAY_RESOURCE` | limite de replay por delivery na janela; default `2/min` |
+| `WDE_QUOTA_<OPERACAO>_WINDOW` | janela fixa PostgreSQL da quota (`1s` para ingestao; `1m` para as demais) |
 | `WDE_WORKER_CONCURRENCY` | jobs HTTP simultaneos; default `8` |
 | `WDE_WORKER_CLAIM_BATCH_SIZE` | claims por ciclo, sempre menor ou igual a concorrencia; default `8` |
 | `WDE_WORKER_WORKSPACE_BATCH_LIMIT` | teto de claims por workspace em um batch; default `2` |
@@ -97,11 +101,19 @@ Principais variaveis:
 | `WDE_SHUTDOWN_TIMEOUT` | prazo de shutdown; default `30s` |
 | `WDE_LOG_LEVEL` | `debug`, `info`, `warn` ou `error` |
 | `WDE_INGRESS_TLS_TERMINATED` | declaracao obrigatoria para API em producao |
-| `WDE_*_FILE` | paths de peppers e keyrings montados em producao |
+| `WDE_*_FILE` | paths de peppers e keyrings montados em producao; rate limit e cursor usam peppers independentes |
 
 No profile `production`, o startup falha se o PostgreSQL nao usar `sslmode=verify-full`, TLS de entrada nao estiver declarado, profiling/HTTP externo estiver habilitado ou os secret files estiverem ausentes, forem symlinks, tiverem permissoes acima de `0600` ou pertencerem a outro UID.
 
 O scheduler nunca reserva mais que os slots livres. Uma sequence monotônica, sem row lock global, alimenta cursores persistidos por workspace e endpoint inclusive entre batches unitários e workers concorrentes. Workspace, endpoint runtime e delivery usam locks locais com `SKIP LOCKED`, portanto um tenant travado não impede progresso independente. Cada claim possui deadline de banco explícito. Polling vazio usa backoff exponencial com jitter para evitar sincronização entre instâncias. Um lease expirado abandona a tentativa antiga e incrementa o fencing token antes de novo envio. Resultados com owner/token vencidos afetam zero linhas.
+
+Antes do lookup de credencial, cada instância aplica semáforo global e limiter fixed-window por volume global, origem observada no socket e prefixo apenas sintático. A memória usa LRU com cardinalidade máxima, identificadores HMAC e ignora headers de origem enviados pelo cliente. Depois da autenticação, a quota persistente roda antes da autorização por escopo.
+
+Quotas autenticadas usam buckets PostgreSQL em uma unica transacao para dimensoes global, workspace, API key e, no replay, delivery. O relogio da janela e `transaction_timestamp()`, portanto todas as dimensoes da mesma requisicao compartilham o mesmo boundary. Reiniciar ou multiplicar instancias nao zera contadores; buckets expirados sao removidos em lotes limitados. Identificadores de dimensao incluem versão, operação, janela e tenant/recurso no HMAC com pepper exclusivo e nunca viram labels de métrica.
+
+`POST /v1/deliveries/{id}/replays` exige `deliveries:retry`, motivo, `Idempotency-Key` e quota. Um replay valido cria novo `run_number`, zera somente o contador do run e preserva `attempt_sequence`, fencing e historico. Comandos concorrentes identicos retornam o mesmo comando; conteudo divergente gera `409`; payload expurgado falha fechado. Comando, transicao e auditoria confirmam ou revertem juntos.
+
+Cursores de listagem são binários, versionados, vinculados ao workspace e autenticados com HMAC. Alteração de qualquer byte ou uso em outro tenant retorna `400 invalid_page` sem revelar dados.
 
 Timeouts, erros de rede, `408`, `425`, `429` e `5xx` recebem retry. Redirects, os demais `4xx` e status fora de `100..599` sao falhas permanentes. O atraso usa full jitter exponencial; `Retry-After` so e aceito quando valido e dentro do teto, caso contrario a politica padrao prevalece. A ultima falha transitoria termina em `dead_letter`, preservando todas as tentativas. Em `SIGINT`/`SIGTERM`, o worker para novos claims, drena jobs, cancela os restantes antes do fim e retorna no deadline absoluto de no maximo 30 segundos mesmo diante de dependencia nao cooperativa.
 
@@ -117,7 +129,7 @@ Peppers produtivos usam uma linha `v1:<base64url-sem-padding>` com exatamente 32
 }
 ```
 
-Peppers de autenticacao, idempotencia e fingerprint, assim como os keyrings de payload/assinatura, devem ter materiais distintos. Arquivos vazios, formatos desconhecidos, chaves curtas, versoes duplicadas e JSON com campos desconhecidos impedem o startup. A API e o worker tambem validam conexao, role PostgreSQL e versao da migration.
+Peppers de autenticação, idempotência, fingerprint, dimensões de quota e cursor, assim como os keyrings de payload/assinatura, devem ter materiais distintos. Arquivos vazios, formatos desconhecidos, chaves curtas, versões duplicadas e JSON com campos desconhecidos impedem o startup. A API e o worker também validam conexão, role PostgreSQL e versão da migration.
 
 `/healthz` e `/readyz` existem somente nos listeners operacionais: liveness indica processo vivo; readiness valida banco, role e schema a cada chamada e retorna `503` quando algum deles deixa de ser compativel ou acessivel. A superficie publica da API responde `404` para essas rotas. Os defaults operacionais e do Chaos Lab usam loopback; o Compose faz bind interno para containers e publica as portas somente em `127.0.0.1`.
 
@@ -132,6 +144,7 @@ make race
 make vet
 make staticcheck
 make vuln
+make openapi-lint
 make migration-validate
 make build
 make check

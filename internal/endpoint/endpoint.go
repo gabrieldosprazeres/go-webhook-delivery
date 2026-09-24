@@ -24,11 +24,15 @@ func NewService(store Store, profile config.Profile, allowHTTP bool, materials c
 }
 
 func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, input CreateInput) (Created, error) {
+	return s.CreateAs(ctx, workspaceID, "system", "internal", "internal", input)
+}
+
+func (s *Service) CreateAs(ctx context.Context, workspaceID uuid.UUID, actorType, actorID, requestID string, input CreateInput) (Created, error) {
 	destination, eventTypes, err := s.validateCreateInput(input)
 	if err != nil {
 		return Created{}, err
 	}
-	record, secret, err := s.newRecord(workspaceID, destination, eventTypes)
+	record, secret, err := s.newRecord(workspaceID, actorType, actorID, requestID, destination, eventTypes)
 	if err != nil {
 		return Created{}, err
 	}
@@ -47,8 +51,12 @@ func (s *Service) validateCreateInput(input CreateInput) (destination, []string,
 	return destination{scheme: scheme, host: host, port: port, path: path}, eventTypes, err
 }
 
-func (s *Service) newRecord(workspaceID uuid.UUID, target destination, eventTypes []string) (NewRecord, string, error) {
+func (s *Service) newRecord(workspaceID uuid.UUID, actorType, actorID, requestID string, target destination, eventTypes []string) (NewRecord, string, error) {
 	id, secretID, err := newEndpointIDs()
+	if err != nil {
+		return NewRecord{}, "", err
+	}
+	auditID, err := uuid.NewV7()
 	if err != nil {
 		return NewRecord{}, "", err
 	}
@@ -62,9 +70,10 @@ func (s *Service) newRecord(workspaceID uuid.UUID, target destination, eventType
 		return NewRecord{}, "", err
 	}
 	record := NewRecord{
-		ID: id, WorkspaceID: workspaceID, SecretVersionID: secretID,
+		ID: id, WorkspaceID: workspaceID, SecretVersionID: secretID, AuditID: auditID,
 		Status: "active", Scheme: target.scheme, Host: target.host, Port: target.port,
-		KeyID: keyID, Target: targetEnvelope, Secret: secretEnvelope, EventTypes: eventTypes,
+		KeyID: keyID, ActorType: actorType, ActorID: actorID, RequestID: requestID,
+		Target: targetEnvelope, Secret: secretEnvelope, EventTypes: eventTypes,
 	}
 	return record, base64.RawURLEncoding.EncodeToString(secretRaw), nil
 }

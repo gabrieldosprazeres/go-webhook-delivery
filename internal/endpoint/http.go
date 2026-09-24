@@ -28,7 +28,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal, _ := auth.PrincipalFrom(r.Context())
-	created, err := h.service.Create(r.Context(), principal.WorkspaceID, input)
+	created, err := h.service.CreateAs(r.Context(), principal.WorkspaceID, "api_key",
+		principal.APIKeyID.String(), problem.RequestID(r.Context()), input)
 	if errors.Is(err, ErrInvalid) {
 		problem.Write(w, r, http.StatusUnprocessableEntity, "invalid_endpoint", "Invalid endpoint")
 		return

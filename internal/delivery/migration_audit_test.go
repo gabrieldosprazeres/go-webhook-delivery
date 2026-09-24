@@ -55,3 +55,31 @@ func TestReliabilityMigrationKeepsFunctionsAuditable(t *testing.T) {
 		t.Fatalf("audited migrations=%d functions=%d", len(paths), functions)
 	}
 }
+
+func TestOperationsMigrationsKeepFunctionsAuditable(t *testing.T) {
+	paths, err := filepath.Glob("../../db/migrations/00000[7-9]_*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := filepath.Glob("../../db/migrations/000010_*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths = append(paths, final...)
+	if len(paths) != 4 {
+		t.Fatalf("operations migrations=%d", len(paths))
+	}
+	for _, path := range paths {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if lines := strings.Count(string(contents), "\n") + 1; lines > 200 {
+			t.Errorf("migration %s lines=%d", filepath.Base(path), lines)
+		}
+		if strings.Contains(strings.ToUpper(string(contents)), "EXECUTE FORMAT") ||
+			strings.Contains(strings.ToUpper(string(contents)), "EXECUTE IMMEDIATE") {
+			t.Errorf("migration %s contains dynamic SQL", filepath.Base(path))
+		}
+	}
+}

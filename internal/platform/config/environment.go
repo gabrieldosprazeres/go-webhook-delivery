@@ -28,6 +28,12 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 	if cfg.AllowHTTPDestinations, err = boolEnv(lookup, "WDE_ALLOW_HTTP_DESTINATIONS", false); err != nil {
 		return err
 	}
+	if err := applyQuotaEnvironment(cfg, lookup); err != nil {
+		return err
+	}
+	if err := applyEdgeEnvironment(cfg, lookup); err != nil {
+		return err
+	}
 	if cfg.Service == ServiceWorker {
 		if err := applyWorkerEnvironment(cfg, lookup); err != nil {
 			return err
@@ -82,14 +88,6 @@ func assignEnv(lookup func(string) (string, bool), name string, target *string) 
 	if value, ok := lookup(name); ok {
 		*target = value
 	}
-}
-
-func applySecretPaths(cfg *Config, lookup func(string) (string, bool)) {
-	cfg.Secrets.AuthPepper, _ = envValue(lookup, "WDE_AUTH_PEPPER_FILE")
-	cfg.Secrets.IdempotencyPepper, _ = envValue(lookup, "WDE_IDEMPOTENCY_PEPPER_FILE")
-	cfg.Secrets.FingerprintPepper, _ = envValue(lookup, "WDE_FINGERPRINT_PEPPER_FILE")
-	cfg.Secrets.PayloadKeyring, _ = envValue(lookup, "WDE_PAYLOAD_KEYRING_FILE")
-	cfg.Secrets.SigningKeyring, _ = envValue(lookup, "WDE_SIGNING_KEYRING_FILE")
 }
 
 func applyFlags(cfg *Config, args []string) error {

@@ -32,6 +32,8 @@ jobs:
         run: make tidy-check
       - name: Validate migrations
         run: make migration-validate
+      - name: Lint OpenAPI contract
+        run: make openapi-lint
 
   test:
     runs-on: ubuntu-24.04
@@ -120,7 +122,7 @@ jobs:
         run: docker compose --profile core up --detach --no-deps api worker
       - name: Verify migration, roles and readiness
         run: |
-          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT wde.schema_version()")" = "3"
+          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT wde.schema_version()")" = "4"
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_api','wde.schema_metadata','SELECT')")" = "f"
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_worker','wde.schema_metadata','SELECT')")" = "f"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/healthz)" = "404"

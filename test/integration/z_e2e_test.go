@@ -37,6 +37,7 @@ func TestEndpointEventWorkerChaosLabSucceeded(t *testing.T) {
 	defer adminPool.Close()
 	workerPool := mustPool(t, ctx, workerURL)
 	defer workerPool.Close()
+	suspendActiveWorkspaces(t, ctx, adminPool)
 	materials, _ := cryptobox.Load(config.ProfileTest, config.SecretFiles{})
 	workspaceID, otherWorkspaceID := uuid.New(), uuid.New()
 	keyID, otherKeyID, limitedKeyID := uuid.New(), uuid.New(), uuid.New()

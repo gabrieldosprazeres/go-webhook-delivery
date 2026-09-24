@@ -20,6 +20,8 @@ type Materials struct {
 	AuthPepper        [32]byte
 	IdempotencyPepper [32]byte
 	FingerprintPepper [32]byte
+	RateLimitPepper   [32]byte
+	CursorPepper      [32]byte
 	Payload           Keyring
 	Signing           Keyring
 }
@@ -56,11 +58,14 @@ func Load(profile config.Profile, files config.SecretFiles) (Materials, error) {
 
 func readPeppers(files config.SecretFiles) (Materials, error) {
 	var result Materials
-	if files.AuthPepper == "" && files.IdempotencyPepper == "" && files.FingerprintPepper == "" {
+	if files.AuthPepper == "" && files.IdempotencyPepper == "" && files.FingerprintPepper == "" &&
+		files.RateLimitPepper == "" && files.CursorPepper == "" {
 		return result, nil
 	}
-	paths := []string{files.AuthPepper, files.IdempotencyPepper, files.FingerprintPepper}
-	targets := []*[32]byte{&result.AuthPepper, &result.IdempotencyPepper, &result.FingerprintPepper}
+	paths := []string{files.AuthPepper, files.IdempotencyPepper, files.FingerprintPepper,
+		files.RateLimitPepper, files.CursorPepper}
+	targets := []*[32]byte{&result.AuthPepper, &result.IdempotencyPepper, &result.FingerprintPepper,
+		&result.RateLimitPepper, &result.CursorPepper}
 	for index, path := range paths {
 		pepper, err := readPepper(path)
 		if err != nil {
@@ -75,8 +80,10 @@ func developmentMaterials() Materials {
 	key := func(label string) [32]byte { return sha256.Sum256([]byte("wde-local-only:" + label)) }
 	return Materials{
 		AuthPepper: key("auth"), IdempotencyPepper: key("idempotency"), FingerprintPepper: key("fingerprint"),
-		Payload: Keyring{Primary: 1, Keys: map[int16][32]byte{1: key("payload-kek")}},
-		Signing: Keyring{Primary: 1, Keys: map[int16][32]byte{1: key("signing-kek")}},
+		RateLimitPepper: key("rate-limit"),
+		CursorPepper:    key("cursor"),
+		Payload:         Keyring{Primary: 1, Keys: map[int16][32]byte{1: key("payload-kek")}},
+		Signing:         Keyring{Primary: 1, Keys: map[int16][32]byte{1: key("signing-kek")}},
 	}
 }
 

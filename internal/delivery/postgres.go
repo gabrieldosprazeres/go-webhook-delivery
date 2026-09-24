@@ -2,7 +2,6 @@ package delivery
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,10 +14,15 @@ const defaultClaimTimeout = 2 * time.Second
 type PostgresStore struct {
 	pool         *pgxpool.Pool
 	claimTimeout time.Duration
+	cursorPepper [32]byte
 }
 
-func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
-	return &PostgresStore{pool: pool, claimTimeout: defaultClaimTimeout}
+func NewPostgresStore(pool *pgxpool.Pool, cursorPepper ...[32]byte) *PostgresStore {
+	store := &PostgresStore{pool: pool, claimTimeout: defaultClaimTimeout}
+	if len(cursorPepper) == 1 {
+		store.cursorPepper = cursorPepper[0]
+	}
+	return store
 }
 
 func (s *PostgresStore) ClaimBatch(ctx context.Context, request ClaimRequest) ([]Claim, error) {
@@ -90,42 +94,4 @@ func normalizeResult(result Result) Result {
 	result.Category = "invalid_http_status"
 	result.RetryAfter = 0
 	return result
-}
-func (s *PostgresStore) Get(ctx context.Context, workspaceID, deliveryID uuid.UUID) (Details, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Details{}, err
-	}
-	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `SELECT set_config('wde.workspace_id',$1,true)`, workspaceID.String()); err != nil {
-		return Details{}, err
-	}
-	var d Details
-	err = tx.QueryRow(ctx, `SELECT id,event_id,endpoint_id,status,created_at,updated_at FROM wde.deliveries WHERE workspace_id=$1 AND id=$2`, workspaceID, deliveryID).Scan(&d.ID, &d.EventID, &d.EndpointID, &d.Status, &d.CreatedAt, &d.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Details{}, ErrNotFound
-	}
-	if err != nil {
-		return Details{}, err
-	}
-	rows, err := tx.Query(ctx, `SELECT id,attempt_sequence,state,outcome,http_status,error_category,started_at,finished_at FROM wde.delivery_attempts WHERE workspace_id=$1 AND delivery_id=$2 ORDER BY attempt_sequence`, workspaceID, deliveryID)
-	if err != nil {
-		return Details{}, err
-	}
-	defer rows.Close()
-	d.Attempts = []Attempt{}
-	for rows.Next() {
-		var a Attempt
-		if err := rows.Scan(&a.ID, &a.Sequence, &a.State, &a.Outcome, &a.HTTPStatus, &a.ErrorCategory, &a.StartedAt, &a.FinishedAt); err != nil {
-			return Details{}, err
-		}
-		d.Attempts = append(d.Attempts, a)
-	}
-	if err := rows.Err(); err != nil {
-		return Details{}, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return Details{}, err
-	}
-	return d, nil
 }

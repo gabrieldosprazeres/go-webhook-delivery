@@ -27,7 +27,7 @@ O PostgreSQL é simultaneamente fonte de verdade e fila durável. O schema preci
 - Estados usam `text` com `CHECK`, evitando a rigidez operacional de enums PostgreSQL em migrations.
 - Dinheiro, JSON transformável, blobs externos e IDs seriais não existem no MVP.
 - `timestamptz` é obrigatório; writes usam `clock_timestamp()` ou `statement_timestamp()` conforme indicado.
-- Idempotency keys, fingerprints de conteúdo e dimensões sensíveis de rate limit são armazenadas como HMAC-SHA-256 com peppers independentes, nunca em texto aberto.
+- Idempotency keys, fingerprints de conteúdo, dimensões sensíveis de rate limit e cursores são autenticados com HMAC-SHA-256 e peppers independentes, nunca em texto aberto.
 - Todo envelope AES-256-GCM registra `cipher_format_version`, `kek_version`, nonce de 12 bytes e ciphertext com tag; todos os campos usam constraint all-or-none.
 - Nenhum trigger de negócio será usado. Integridade depende de constraints, grants e statements condicionais visíveis/testáveis.
 
@@ -226,7 +226,7 @@ Armazena `id`, `workspace_id` nullable somente para bootstrap, `actor_type`, `ac
 
 ### 4.11 `rate_limit_buckets`
 
-PK `(dimension_hash, operation, window_started_at)`, com `workspace_id`/`api_key_id` opcionais conforme dimensão, `count`, `expires_at`. `dimension_hash` é HMAC; IP, token e prefixo brutos não são persistidos. Incremento é `INSERT ... ON CONFLICT ... DO UPDATE SET count = count + 1 ... RETURNING count`.
+PK `(dimension_hash, operation, window_started_at)`, com `workspace_id`/`api_key_id`/`resource_id` conforme dimensão, `count`, `expires_at`. `dimension_hash` usa HMAC versionado sobre operação, janela, tipo, workspace, API key e recurso aplicáveis; o mesmo UUID de delivery apresentado por tenants diferentes nunca compartilha bucket. O conflito só incrementa quando todos os metadados persistidos coincidem. IP, token e prefixo brutos não são persistidos. Incremento é `INSERT ... ON CONFLICT ... DO UPDATE SET count = count + 1 ... RETURNING count`.
 
 ### 4.12 `maintenance_jobs`
 
@@ -252,7 +252,7 @@ delivery_attempts.(workspace_id,delivery_id)  -> deliveries.(workspace_id,id)
 replay_commands.(workspace_id,delivery_id)    -> deliveries.(workspace_id,id)
 ```
 
-Auditoria armazena snapshots opacos de ator/recurso e não possui FK para entidade expurgável. `rate_limit_buckets` possui `CHECK` por tipo de dimensão: workspace exige apenas workspace, api_key exige par workspace+key, origin exige ambos nulos. `maintenance_jobs` possui `CHECK` por tipo: jobs tenant-scoped exigem workspace; jobs globais proíbem; jobs de recurso exigem tipo/ID correspondente. Pares opcionais usam `MATCH FULL`.
+Auditoria armazena snapshots opacos de ator/recurso e não possui FK para entidade expurgável. `rate_limit_buckets` possui `CHECK` por tipo de dimensão: global proíbe IDs, workspace exige workspace, api_key exige par workspace+key e delivery exige workspace+recurso. `maintenance_jobs` possui `CHECK` por tipo: jobs tenant-scoped exigem workspace; jobs globais proíbem; jobs de recurso exigem tipo/ID correspondente. Pares opcionais usam `MATCH FULL`.
 
 Purge administrativo remove explicitamente na ordem: bloquear/revogar → attempts/replay operacional vencido → deliveries → events → secrets/subscriptions/runtime → endpoints → scopes/keys → workspace. Auditoria e tombstone sobrevivem conforme suas retenções; nenhuma cascade apaga evidência histórica.
 
@@ -375,6 +375,8 @@ Attempts anteriores permanecem intactos. Delivery `succeeded`, payload purgado o
 - `wde_auth_executor NOLOGIN`: owner somente da função de lookup pré-auth e policy de leitura limitada de credencial.
 - `wde_worker_executor NOLOGIN`: owner somente das funções globais de claim/finalização/manutenção e policies necessárias.
 - `wde_audit_executor NOLOGIN`: owner da função append-only de auditoria.
+- `wde_quota_executor NOLOGIN`: owner somente da função de buckets persistentes e de sua policy.
+- `wde_replay_executor NOLOGIN`: owner somente do comando atômico de replay e de suas policies.
 
 Nenhuma role runtime é superuser, owner ou possui `BYPASSRLS`, `CREATEROLE`, `CREATEDB` ou `CREATE` no schema.
 
@@ -390,7 +392,7 @@ Políticas da API exigem `workspace_id = current_workspace_id()` para `USING` e 
 
 Qualquer role pode escolher um custom GUC; portanto, RLS reduz erros acidentais mas não protege contra comprometimento da credencial `wde_api`. Filtros explícitos, credenciais rotacionáveis, mínimo privilégio e monitoramento continuam obrigatórios.
 
-O worker não recebe policy ampla nem acesso direto cross-tenant. Claims, finalizações, purge e manutenção passam obrigatoriamente por funções `SECURITY DEFINER` estreitas pertencentes a `wde_worker_executor`. O lookup pré-auth pertence a `wde_auth_executor`. Com `FORCE RLS`, policies `TO wde_auth_executor`/`TO wde_worker_executor` liberam apenas tabela, comando e predicado necessários.
+O worker não recebe policy ampla nem acesso direto cross-tenant. Claims, finalizações, purge e manutenção passam obrigatoriamente por funções `SECURITY DEFINER` estreitas pertencentes a `wde_worker_executor`. Lookup pré-auth, quotas, replay e auditoria pertencem respectivamente a executores NOLOGIN distintos. Com `FORCE RLS`, cada policy libera somente tabela, comando e predicado necessários ao executor correspondente.
 
 Todas as funções privilegiadas usam `SECURITY DEFINER SET search_path = pg_catalog`, qualificam cada objeto com `wde.`, não usam SQL dinâmico, validam tamanho/formato de argumentos e têm `PUBLIC EXECUTE` revogado. Runtime recebe apenas `EXECUTE`, nunca membership/`SET ROLE` nas roles executoras. Lookup por prefixo retorna no máximo uma linha e comparação com pepper permanece no Go.
 
@@ -402,8 +404,8 @@ Todas as funções privilegiadas usam `SECURITY DEFINER SET search_path = pg_cat
 | `workspaces`, endpoints, events, deliveries | `wde_owner` | `wde_api` apenas sob RLS tenant-scoped | `USING/WITH CHECK` para API; worker somente por funções executoras |
 | `delivery_attempts` | `wde_owner` | nenhum DML | `claim_deliveries`, `finalize_delivery`, `expire_claim` |
 | `audit_events` | `wde_owner` | nenhum DML | `append_audit_event` owned por `wde_audit_executor` |
-| `replay_commands` | `wde_owner` | leitura tenant-scoped | `request_replay` executa comando + audit atomicamente |
-| `rate_limit_buckets` | `wde_owner` | nenhum DML | `consume_quota` com dimensão allowlisted |
+| `replay_commands` | `wde_owner` | leitura tenant-scoped | `request_replay` owned por `wde_replay_executor` executa comando + audit atomicamente |
+| `rate_limit_buckets` | `wde_owner` | nenhum DML | `consume_quota` owned por `wde_quota_executor` com dimensão allowlisted |
 | `maintenance_jobs` | `wde_owner` | nenhum DML | funções de claim/finalização do executor worker |
 | `workspace_tombstones`, estado de restore | `wde_owner` | nenhum acesso | comandos one-shot do `wde_admin` por função específica |
 
@@ -470,12 +472,14 @@ Ordem planejada:
 3. `000003_api_keys` — credenciais, scopes e função pré-auth.
 4. `000004_endpoints` — endpoints, subscriptions, runtime e secret versions.
 5. `000005_events_and_deliveries` — events, deliveries, attempts e índices da fila.
-6. `000006_operations` — replay, audit, rate limits e maintenance jobs.
+6. `000007`–`000010_operations` — replay, audit e rate limits; maintenance jobs entram com o purge da Sprint 4.
 7. `000007_privileged_operations` — funções executoras, policies específicas e grants `EXECUTE`.
 
 Fixtures ficam fora da cadeia produtiva, em comando/pasta de teste separado com dupla trava: profile `local|test` e banco marcado como descartável. Migrations usam lock timeout e statement timeout explícitos. `down` existe para desenvolvimento quando reversível; migrations destrutivas em produção usam expand/contract e não dependem de rollback automático. Runtime nunca executa migrations. CI interrompe cada migration artificialmente e confirma que roles runtime continuam fail-closed.
 
 Na fatia materializada da Sprint 2, o schema lógico v3 foi dividido em quatro migrations Goose auditáveis: `000003_reliability_schema`, `000004_reliability_claim_transition`, `000005_reliability_claim_entrypoint` e `000006_reliability_finalize`. As versões físicas 3–5 adicionam apenas estruturas e funções v3 internas, sem retirar entrypoints ou grants v2. A `000006` troca claim, finalize, grants e `wde.schema_version=3` na mesma transação. No `down`, a própria `000006` restaura contratos v2 e `schema_version=2` atomicamente antes que migrations anteriores removam os helpers. Assim, cada boundary anuncia somente um contrato completo; o runtime v3 recusa readiness nas versões lógicas v2.
+
+Na Sprint 3, o schema lógico v4 segue o mesmo padrão: `000007_operations_schema` cria tabelas/RLS sem expor entrypoints; `000008_quota_audit_functions` e `000009_replay_function` criam funções de staging sem grants para roles login; somente `000010_operations_finalize` publica os nomes, grants mínimos e `schema_version=4` na mesma transação. O downgrade da `000010` revoga os entrypoints, restaura os nomes de staging e anuncia v3 antes da remoção dos objetos. O runtime v4 recusa todos os boundaries físicos 6–9.
 
 ## 12. Testes obrigatórios do schema
 

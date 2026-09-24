@@ -56,6 +56,8 @@ type Config struct {
 	WorkerLeaseTTL        time.Duration
 	WorkerRetryBase       time.Duration
 	WorkerRetryCap        time.Duration
+	Edge                  EdgeConfig
+	Quotas                QuotaConfig
 	Secrets               SecretFiles
 }
 
@@ -64,6 +66,8 @@ type SecretFiles struct {
 	AuthPepper        string
 	IdempotencyPepper string
 	FingerprintPepper string
+	RateLimitPepper   string
+	CursorPepper      string
 	PayloadKeyring    string
 	SigningKeyring    string
 }
@@ -100,6 +104,7 @@ func defaults(service Service) (Config, error) {
 	cfg := Config{
 		Service: service, Profile: ProfileLocal, Version: "dev", LogLevel: "info",
 		DatabaseTimeout: defaultDatabaseTimeout, ShutdownTimeout: defaultShutdownTimeout,
+		Edge: defaultEdgeConfig(), Quotas: defaultQuotas(),
 	}
 	switch service {
 	case ServiceAPI:
