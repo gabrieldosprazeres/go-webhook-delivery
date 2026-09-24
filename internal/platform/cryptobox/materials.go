@@ -35,6 +35,17 @@ type keyringDocument struct {
 	} `json:"keys"`
 }
 
+// Ready confirms that both in-memory keyrings still have usable primary keys.
+func (m Materials) Ready() error {
+	if _, ok := m.Payload.Keys[m.Payload.Primary]; !ok || m.Payload.Primary <= 0 {
+		return errors.New("cryptobox: payload keyring unavailable")
+	}
+	if _, ok := m.Signing.Keys[m.Signing.Primary]; !ok || m.Signing.Primary <= 0 {
+		return errors.New("cryptobox: signing keyring unavailable")
+	}
+	return nil
+}
+
 // Load returns deterministic, explicitly non-production material locally and mounted material in production.
 func Load(profile config.Profile, files config.SecretFiles) (Materials, error) {
 	if profile != config.ProfileProduction {

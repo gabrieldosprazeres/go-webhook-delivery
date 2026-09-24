@@ -1,8 +1,10 @@
 openapi: 3.1.0
 info:
   title: Webhook Delivery Engine API
-  version: 0.4.0
-  description: Reliable at-least-once webhook delivery. Consumers deduplicate using WDE-Delivery-ID.
+  version: 0.5.0
+  description: |-
+    Reliable at-least-once webhook delivery. Event acceptance is not delivery success.
+    Consumers verify HMAC v1 within a five-minute window and deduplicate using WDE-Delivery-ID.
 servers:
   - url: http://localhost:8080
 security:
@@ -18,6 +20,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateEndpoint'
+            example:
+              url: https://receiver.example/webhooks
+              event_types: [invoice.created]
       responses:
         '201':
           description: Endpoint created
@@ -25,6 +30,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreatedEndpoint'
+              example:
+                endpoint:
+                  id: 018f0f5b-6e2e-7b5f-8f71-71f77f623001
+                  url: https://receiver.example/webhooks
+                  status: active
+                  event_types: [invoice.created]
+                signing_secret:
+                  key_id: synthetic-key-001
+                  secret: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA
         '429':
           $ref: '#/components/responses/QuotaExceeded'
         default:
@@ -61,6 +75,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/RotateSecretRequest'
+            example: {overlap_seconds: 3600}
       responses:
         '202':
           description: Rotation accepted; the new secret is revealed in this idempotent response
@@ -68,6 +83,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RotateSecretResult'
+              example:
+                endpoint_id: 018f0f5b-6e2e-7b5f-8f71-71f77f623001
+                signing_secret:
+                  key_id: synthetic-key-002
+                  secret: MTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTE
+                duplicate: false
         '409':
           description: Rotation conflict, overlap in progress, or idempotent result whose secret expired
           content:
@@ -98,6 +119,9 @@ paths:
               properties:
                 type: {type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$'}
                 data: {}
+            example:
+              type: invoice.created
+              data: {invoice_id: inv_demo_001, amount: 1999}
       responses:
         '202':
           description: Persisted event and delivery fan-out
@@ -110,6 +134,10 @@ paths:
                   event_id: {type: string, format: uuid}
                   delivery_ids: {type: array, items: {type: string, format: uuid}}
                   duplicate: {type: boolean}
+              example:
+                event_id: 018f0f5b-6e2e-7b5f-8f71-71f77f623002
+                delivery_ids: [018f0f5b-6e2e-7b5f-8f71-71f77f623003]
+                duplicate: false
         '409':
           description: Idempotency key reused with different content
           content:
@@ -176,6 +204,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ReplayRequest'
+            example: {reason: Operator confirmed receiver recovery}
       responses:
         '202':
           description: Replay accepted or the identical prior command returned
@@ -183,6 +212,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReplayResult'
+              example:
+                command_id: 018f0f5b-6e2e-7b5f-8f71-71f77f623004
+                delivery_id: 018f0f5b-6e2e-7b5f-8f71-71f77f623003
+                run_number: 2
+                duplicate: false
         '409':
           description: Idempotency conflict, invalid transition or purged payload
           content:
@@ -206,6 +240,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+      description: API key revealed once by local bootstrap; never place it in URLs.
   parameters:
     ResourceID:
       name: id
@@ -246,11 +281,13 @@ components:
         event_types: {type: array, items: {type: string}}
     CreatedEndpoint:
       type: object
+      additionalProperties: false
       required: [endpoint, signing_secret]
       properties:
         endpoint: {$ref: '#/components/schemas/Endpoint'}
         signing_secret:
           type: object
+          additionalProperties: false
           required: [key_id, secret]
           properties:
             key_id: {type: string}
@@ -268,6 +305,7 @@ components:
         endpoint_id: {type: string, format: uuid}
         signing_secret:
           type: object
+          additionalProperties: false
           required: [key_id, secret]
           properties:
             key_id: {type: string}

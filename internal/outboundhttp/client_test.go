@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestDialerPinsValidatedAddressAndRevalidatesNewConnection(t *testing.T) {
@@ -156,5 +159,51 @@ func TestDialerSharesCallerDeadlineAcrossMultipleAddresses(t *testing.T) {
 	_, err := dialer.DialContext(ctx, "tcp", "slow.example:443")
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 100*time.Millisecond || attempts.Load() != 3 {
 		t.Fatalf("err=%v elapsed=%s attempts=%d", err, time.Since(started), attempts.Load())
+	}
+}
+
+func TestDialerCreatesSafeResolveAndConnectChildSpans(t *testing.T) {
+	const canary = "CANARY-host-or-ip-must-not-be-an-attribute"
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	ctx, parent := provider.Tracer("test").Start(context.Background(), "webhook.delivery.attempt")
+	dialer := Dialer{
+		Policy: Policy{Profile: config.ProfileProduction, Resolver: resolverFunc(func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+		})},
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			left, right := net.Pipe()
+			_ = right.Close()
+			return left, nil
+		},
+	}
+	connection, err := dialer.DialContext(ctx, "tcp", canary+":443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = connection.Close()
+	parent.End()
+
+	spans := recorder.Ended()
+	if len(spans) != 3 {
+		t.Fatalf("ended spans=%d, want resolve, connect and parent", len(spans))
+	}
+	wantParent := parent.SpanContext().SpanID()
+	found := map[string]bool{}
+	for _, span := range spans {
+		found[span.Name()] = true
+		if span.Name() == "webhook.destination.resolve" || span.Name() == "webhook.destination.connect" {
+			if span.Parent().SpanID() != wantParent {
+				t.Fatalf("%s parent=%s, want %s", span.Name(), span.Parent().SpanID(), wantParent)
+			}
+			if strings.Contains(span.Name()+fmt.Sprint(span.Attributes()), canary) {
+				t.Fatalf("%s leaked destination canary", span.Name())
+			}
+		}
+	}
+	for _, name := range []string{"webhook.destination.resolve", "webhook.destination.connect", "webhook.delivery.attempt"} {
+		if !found[name] {
+			t.Fatalf("missing span %q: %#v", name, found)
+		}
 	}
 }

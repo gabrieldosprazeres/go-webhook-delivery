@@ -3,7 +3,7 @@
 GO ?= go
 
 .PHONY: help fmt fmt-check tidy-check test integration race vet staticcheck vuln openapi-lint build check \
-	migration-validate migrate-up migrate-status compose-config compose-up compose-demo compose-down
+	migration-validate migrate-up migrate-status compose-config compose-up compose-demo compose-down quickstart
 
 help: ## Lista os comandos disponiveis.
 	@awk 'BEGIN {FS = ":.*##"; printf "Uso: make <alvo>\n\n"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -25,7 +25,7 @@ integration: ## Executa schema, concorrencia e E2E; exige as quatro WDE_TEST_*_D
 	$(GO) test ./test/integration -run '^TestCredentialBootstrapIsSerializedAndRevocable$$' -count=1 -v
 	$(GO) test ./test/integration -run '^(TestTenantContextAndAppendOnlyACL|TestConcurrentIdempotency|TestClaimWithoutCompleteSnapshotDoesNotMutateDelivery|TestEndpointEventWorkerChaosLabSucceeded|TestMigrationBoundariesRemainFailClosed|TestBatchClaimFairnessAndConcurrentWorkers|TestLockedWorkspaceDoesNotBlockIndependentClaim|TestClaimPlanUsesReadyIndexAtRepresentativeScale|TestPersistentFairnessAcrossSingleSlotCycles|TestPersistentFairnessWithConcurrentSingleSlotWorkers|TestEndpointCapacityDoesNotStarveHealthyEndpoint|TestLeaseRecoveryFencingAndAbandonedAttempt|TestRetryHistoryDeadLetterAndNeverMaxPlusOne|TestRepeatedCrashesStopAtMaximumAttempts|TestHostileHTTPStatusDoesNotBreakFinalizeOrNextTenant)$$' -count=1 -v
 	$(GO) test ./test/integration -run '^(TestTenantTransactionDoesNotLeakAfterCommitRollbackOrPanic|TestPersistentQuotaIsAtomicAcrossDimensionsRestartAndExpiry|TestPersistentQuotaGlobalBucketContentionIsExact|TestFanoutAndPaginationLimitsAreEnforced|TestReplayGenerationIsConcurrentIdempotentAndPreservesHistory|TestReplayConflictAndPurgedPayloadFailClosed|TestReplayHTTPContractScopeAndTenantIsolation|TestOperationsACLAndAuditSnapshotsAreImmutable)$$' -count=1 -v
-	$(GO) test ./test/integration -run '^(TestSecretRotationIsConcurrentIdempotentAndDualSigns|TestExpiredRotationIdempotencySurvivesSecretPurge|TestSecretStateAndTemporalConstraintsFailClosedForAPIAndOwner|TestPayloadPurgeFencesWorkerAndBlocksReplay|TestMaintenanceBatchesRejectNullAndEnforcePhysicalCap|TestRetentionRunnerDrainsLargeExpiredBucketBacklog|TestRetentionBacklogExcludesParentsBlockedByLiveChildren|TestMetadataRetentionPurgesGraphCommandsAndExpiredAudit|TestRestoreQuarantineRevokesSnapshotBeforeReadiness|TestWorkspacePurgePreservesTombstoneAndAudit|TestWorkspacePurgeSerializesRotationAndRewindsLateChildren|TestDataSecurityFunctionsAndRolesAreLeastPrivilege)$$' -count=1 -v
+	$(GO) test ./test/integration -run '^(TestSecretRotationIsConcurrentIdempotentAndDualSigns|TestExpiredRotationIdempotencySurvivesSecretPurge|TestSecretStateAndTemporalConstraintsFailClosedForAPIAndOwner|TestPayloadPurgeFencesWorkerAndBlocksReplay|TestMaintenanceBatchesRejectNullAndEnforcePhysicalCap|TestRetentionRunnerDrainsLargeExpiredBucketBacklog|TestRetentionBacklogExcludesParentsBlockedByLiveChildren|TestMetadataRetentionPurgesGraphCommandsAndExpiredAudit|TestRestoreQuarantineRevokesSnapshotBeforeReadiness|TestWorkspacePurgePreservesTombstoneAndAudit|TestWorkspacePurgeSerializesRotationAndRewindsLateChildren|TestDataSecurityFunctionsAndRolesAreLeastPrivilege|TestQueueMetricsAreAggregateAndWorkerOnly)$$' -count=1 -v
 	$(GO) test ./cmd/api -run '^TestProductionRoutePipelineBoundsAuthScopeAndCrossTenantQuota$$' -count=1 -v
 	$(GO) test ./cmd/worker -run '^TestWorkerProcessSIGTERM$$' -count=1 -v
 
@@ -72,5 +72,8 @@ compose-demo: ## Sobe o core e o Chaos Lab local.
 
 compose-down: ## Encerra os containers preservando o volume PostgreSQL.
 	docker compose --profile demo down
+
+quickstart: ## Executa a demonstracao local completa em ambiente efemero.
+	./scripts/quickstart.sh
 
 check: fmt-check tidy-check test race vet staticcheck vuln openapi-lint migration-validate build ## Executa todos os gates locais da implementacao atual.

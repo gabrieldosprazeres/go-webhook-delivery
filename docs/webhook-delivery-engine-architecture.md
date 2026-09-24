@@ -102,6 +102,7 @@ O produtor publica eventos. O Engine persiste, agenda e entrega. O consumidor é
 - `api` é stateless fora do PostgreSQL e da configuração em memória.
 - `worker` mantém somente capacidade e tarefas em andamento; todo trabalho recuperável está no banco.
 - cada processo expõe um listener operacional separado, ligado a loopback por padrão;
+- bind operacional não-loopback exige rede privada e ACL/NetworkPolicy negando ingress público, porque probes e métricas não têm autenticação de aplicação;
 - `chaoslab` usa imagem/perfil Compose separado e nunca integra a imagem ou configuração de produção.
 
 ### 3.3 Nível 3 — Componentes internos
@@ -573,9 +574,13 @@ Exemplos:
 
 Nunca usar workspace, key, IP, URL, endpoint, evento, delivery ou erro bruto como label.
 
+Cada processo usa registry próprio. API observa somente rotas canônicas, método `GET`/`POST`/`OTHER` e classe de status. Worker amostra backlog/idade por um entrypoint PostgreSQL agregado, sem dimensão tenant, e publica sucesso da última amostra. Categorias de tentativa e purge passam por allowlist; desconhecidas viram `other`.
+
 ### 20.3 Traces
 
 Spans cobrem ingresso, transação, claim, DNS, conexão, tentativa e finalização. Atributos seguem convenções OTel e allowlist; conteúdo sensível e URL completa são omitidos. Export falha sem interromper o caminho de negócio e usa TLS/autenticação fora de local.
+
+No MVP, request e tentativa são correlacionáveis pelos IDs opacos de evento/delivery/attempt; o consumidor recebe somente `traceparent`. Baggage e `tracestate` de entrada são descartados para não propagar metadados não confiáveis. O provider é local ao processo, no-op quando o endpoint OTLP está vazio, usa batch/export bounded e faz flush dentro do deadline de shutdown. Produção exige URL OTLP HTTPS sem credenciais, query ou fragmento.
 
 ### 20.4 Probes e profiling
 
@@ -584,6 +589,8 @@ Spans cobrem ingresso, transação, claim, DNS, conexão, tentativa e finalizaç
 - readiness worker: PostgreSQL/keyrings válidos e scheduler aceitando claims;
 - listener operacional separado em loopback/rede interna, respostas mínimas;
 - `pprof` não é compilado/registrado por padrão em produção; habilitação local exige flag explícita.
+
+As rotas concretas são `GET /livez`, `GET /readyz` e `GET /metrics`. API pública não registra nenhuma delas. Readiness também falha durante quarantine de restore; no worker considera keyrings, scheduler e saúde do job de retenção. O Compose executa o próprio binário distroless como healthcheck, sem instalar shell/curl na imagem.
 
 ## 21. Estratégia de testes
 

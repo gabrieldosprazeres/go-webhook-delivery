@@ -14,6 +14,7 @@ import (
 
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/outboundhttp"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/telemetry"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/signing"
 )
 
@@ -82,6 +83,7 @@ func (r *Runner) buildRequest(ctx context.Context, target string, claim Claim, o
 		values = append(values, signing.HeaderValue(claim.Retiring.KeyID, prior))
 	}
 	req.Header.Set(signing.HeaderSignature, strings.Join(values, ";"))
+	telemetry.Inject(ctx, req)
 	return req, ""
 }
 

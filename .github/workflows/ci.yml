@@ -125,18 +125,20 @@ jobs:
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT wde.schema_version()")" = "5"
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_api','wde.schema_metadata','SELECT')")" = "f"
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_worker','wde.schema_metadata','SELECT')")" = "f"
-          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/healthz)" = "404"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/livez)" = "404"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/readyz)" = "404"
-          curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9090/healthz
+          curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9090/livez
           curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9090/readyz
-          curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9091/healthz
+          curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9091/livez
           curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9091/readyz
+          curl --fail http://127.0.0.1:9090/metrics | grep -q '^wde_http_requests_total'
+          curl --fail http://127.0.0.1:9091/metrics | grep -q '^wde_active_workers'
           test "$(docker inspect --format='{{.State.Status}}' webhook-delivery-engine-worker-1)" = "running"
       - name: Verify dynamic readiness during database loss
         run: |
           docker compose --profile core stop postgres
-          curl --fail http://127.0.0.1:9090/healthz
-          curl --fail http://127.0.0.1:9091/healthz
+          curl --fail http://127.0.0.1:9090/livez
+          curl --fail http://127.0.0.1:9091/livez
           ! curl --fail --max-time 10 http://127.0.0.1:9090/readyz
           ! curl --fail --max-time 10 http://127.0.0.1:9091/readyz
       - name: Show logs on failure

@@ -18,6 +18,7 @@ import (
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/operational"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/problem"
 	appruntime "github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/runtime"
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/telemetry"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/ratelimit"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -28,13 +29,15 @@ func openAPIDatabase(ctx context.Context, cfg config.Config) (*pgxpool.Pool, err
 	return database.Open(databaseCtx, cfg.DatabaseURL, database.RoleAPI)
 }
 
-func serveAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, materials cryptobox.Materials) error {
-	servers, err := apiHTTPServers(ctx, cfg, pool, materials)
+func serveAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool,
+	materials cryptobox.Materials, observability *telemetry.Service, shutdown *appruntime.ShutdownBudget,
+) error {
+	servers, err := apiHTTPServers(ctx, cfg, pool, materials, observability)
 	if err != nil {
 		return err
 	}
 	logger.InfoContext(ctx, "service started", slog.String("component", "http"))
-	err = appruntime.ServeAll(ctx, cfg.ShutdownTimeout, servers...)
+	err = appruntime.ServeAllWithBudget(ctx, shutdown, servers...)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
@@ -42,7 +45,9 @@ func serveAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, pool 
 	return nil
 }
 
-func apiHTTPServers(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, materials cryptobox.Materials) ([]appruntime.HTTPServer, error) {
+func apiHTTPServers(ctx context.Context, cfg config.Config, pool *pgxpool.Pool,
+	materials cryptobox.Materials, observability *telemetry.Service,
+) ([]appruntime.HTTPServer, error) {
 	publicListener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
 		return nil, err
@@ -53,12 +58,18 @@ func apiHTTPServers(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, 
 		return nil, err
 	}
 	return []appruntime.HTTPServer{
-		{Server: newPublicServer(cfg, pool, materials), Listener: publicListener},
-		{Server: newOperationalServer(ctx, cfg, pool), Listener: operationalListener},
+		{Server: newPublicServer(cfg, pool, materials, observability), Listener: publicListener},
+		{Server: newOperationalServer(ctx, cfg, pool, materials, observability), Listener: operationalListener},
 	}, nil
 }
 
-func newPublicServer(cfg config.Config, pool *pgxpool.Pool, materials cryptobox.Materials) *http.Server {
+func newPublicServer(cfg config.Config, pool *pgxpool.Pool, materials cryptobox.Materials,
+	optional ...*telemetry.Service,
+) *http.Server {
+	observability := telemetry.NewNoop()
+	if len(optional) == 1 && optional[0] != nil {
+		observability = optional[0]
+	}
 	lookup := auth.NewPostgresLookup(pool)
 	deliveryStore := delivery.NewPostgresStore(pool, materials.CursorPepper)
 	deps := routesDependencies{
@@ -72,7 +83,8 @@ func newPublicServer(cfg config.Config, pool *pgxpool.Pool, materials cryptobox.
 			Origin: cfg.Edge.Origin, Prefix: cfg.Edge.Prefix,
 			MaxBuckets: cfg.Edge.MaxBuckets, Window: cfg.Edge.Window,
 		}, materials.RateLimitPepper),
-		quotas: cfg.Quotas,
+		quotas:    cfg.Quotas,
+		telemetry: observability,
 	}
 	return &http.Server{
 		Handler: publicRoutes(deps), ReadHeaderTimeout: 5 * time.Second,
@@ -81,9 +93,14 @@ func newPublicServer(cfg config.Config, pool *pgxpool.Pool, materials cryptobox.
 	}
 }
 
-func newOperationalServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) *http.Server {
+func newOperationalServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool,
+	materials cryptobox.Materials, observability *telemetry.Service,
+) *http.Server {
 	readiness := func(requestCtx context.Context) error {
 		if ctx.Err() != nil {
+			return database.ErrUnavailable
+		}
+		if err := materials.Ready(); err != nil {
 			return database.ErrUnavailable
 		}
 		checkCtx, cancel := context.WithTimeout(requestCtx, cfg.DatabaseTimeout)
@@ -91,7 +108,7 @@ func newOperationalServer(ctx context.Context, cfg config.Config, pool *pgxpool.
 		return database.Check(checkCtx, pool, database.RoleAPI)
 	}
 	return &http.Server{
-		Handler: operational.Handler(readiness), ReadHeaderTimeout: 2 * time.Second,
+		Handler: operational.Handler(readiness, observability.Metrics().Handler()), ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second,
 		IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8 << 10,
 	}
@@ -105,22 +122,33 @@ type routesDependencies struct {
 	limiter       *ratelimit.Limiter
 	edge          *ratelimit.EdgeLimiter
 	quotas        config.QuotaConfig
+	telemetry     *telemetry.Service
 }
 
 func publicRoutes(optional ...routesDependencies) http.Handler {
 	mux := http.NewServeMux()
 	if len(optional) == 1 {
 		deps := optional[0]
-		mux.Handle("POST /v1/endpoints", deps.protected("endpoints:write", "endpoint_write", deps.quotas.EndpointWrite, http.HandlerFunc(deps.endpoints.Create)))
-		mux.Handle("GET /v1/endpoints/{id}", deps.protected("deliveries:read", "query", deps.quotas.Query, http.HandlerFunc(deps.endpoints.Get)))
-		mux.Handle("POST /v1/endpoints/{id}/secret-rotations", deps.protected("endpoints:write", "endpoint_write", deps.quotas.EndpointWrite, http.HandlerFunc(deps.endpoints.Rotate)))
-		mux.Handle("POST /v1/events", deps.protected("events:write", "ingest", deps.quotas.Ingest, http.HandlerFunc(deps.events.Publish)))
-		mux.Handle("GET /v1/deliveries", deps.protected("deliveries:read", "query", deps.quotas.Query, http.HandlerFunc(deps.deliveries.List)))
-		mux.Handle("GET /v1/deliveries/{id}", deps.protected("deliveries:read", "query", deps.quotas.Query, http.HandlerFunc(deps.deliveries.Get)))
-		mux.Handle("POST /v1/deliveries/{id}/replays", deps.protected("deliveries:retry", "replay", deps.quotas.Replay, http.HandlerFunc(deps.deliveries.Replay)))
+		deps.route(mux, "POST /v1/endpoints", "/v1/endpoints", "endpoints:write", "endpoint_write", deps.quotas.EndpointWrite, http.HandlerFunc(deps.endpoints.Create))
+		deps.route(mux, "GET /v1/endpoints/{id}", "/v1/endpoints/{id}", "deliveries:read", "query", deps.quotas.Query, http.HandlerFunc(deps.endpoints.Get))
+		deps.route(mux, "POST /v1/endpoints/{id}/secret-rotations", "/v1/endpoints/{id}/secret-rotations", "endpoints:write", "endpoint_write", deps.quotas.EndpointWrite, http.HandlerFunc(deps.endpoints.Rotate))
+		deps.route(mux, "POST /v1/events", "/v1/events", "events:write", "ingest", deps.quotas.Ingest, http.HandlerFunc(deps.events.Publish))
+		deps.route(mux, "GET /v1/deliveries", "/v1/deliveries", "deliveries:read", "query", deps.quotas.Query, http.HandlerFunc(deps.deliveries.List))
+		deps.route(mux, "GET /v1/deliveries/{id}", "/v1/deliveries/{id}", "deliveries:read", "query", deps.quotas.Query, http.HandlerFunc(deps.deliveries.Get))
+		deps.route(mux, "POST /v1/deliveries/{id}/replays", "/v1/deliveries/{id}/replays", "deliveries:retry", "replay", deps.quotas.Replay, http.HandlerFunc(deps.deliveries.Replay))
 	}
-	mux.Handle("/", problem.NotFound())
+	observability := telemetry.NewNoop()
+	if len(optional) == 1 && optional[0].telemetry != nil {
+		observability = optional[0].telemetry
+	}
+	mux.Handle("/", observability.HTTP("unmatched", problem.NotFound()))
 	return problem.WithRequestID(problem.Recover(mux))
+}
+
+func (deps routesDependencies) route(mux *http.ServeMux, pattern, route, scope, operation string,
+	quota config.QuotaPolicy, next http.Handler,
+) {
+	mux.Handle(pattern, deps.telemetry.HTTP(route, deps.protected(scope, operation, quota, next)))
 }
 
 func (deps routesDependencies) protected(scope, operation string, quota config.QuotaPolicy, next http.Handler) http.Handler {

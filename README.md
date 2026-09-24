@@ -2,13 +2,14 @@
 
 Servico de entrega confiavel de webhooks escrito em Go. O projeto demonstra ingestao idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento multi-tenant, assinatura HMAC, defesa SSRF e operacao observavel.
 
-> Estado atual: Sprint 4 implementada. O engine inclui entrega concorrente, quotas persistentes, replay por geracao, cliente HTTP anti-SSRF, envelopes AES-256-GCM, rotação HMAC com assinatura dupla, purge e restore fail-closed. O projeto nunca promete `exactly-once`.
+> Estado atual: Sprint 5 implementada. O engine inclui entrega concorrente, segurança de saída e dados, retenção, métricas Prometheus, traces OpenTelemetry, probes internos e uma demonstração automatizada. O projeto nunca promete `exactly-once`.
 
 ## Stack
 
 - Go 1.27.1, `net/http` e `log/slog`;
 - PostgreSQL 17 como fonte de verdade e fila duravel;
 - Goose para migrations explicitas;
+- Prometheus e OpenTelemetry OTLP/HTTP para observabilidade;
 - `go test`, race detector, vet, Staticcheck e `govulncheck`;
 - Docker Compose para o ambiente local.
 
@@ -22,6 +23,16 @@ As ferramentas Go ficam pinadas no `go.mod` e sao executadas com `go tool`.
 
 ## Inicio rapido
 
+A jornada reproduzível completa cria um PostgreSQL efêmero isolado, compila os três binários e demonstra bootstrap, HMAC, rotação com assinatura dupla, replay, retry, DLQ e métricas. Em uma máquina com os pré-requisitos, ela termina em menos de 10 minutos e remove credenciais/processos/volume ao sair:
+
+```bash
+make quickstart
+```
+
+Os artefatos sensíveis ficam em um diretório temporário `0700`; a credencial sintética é criada com modo `0600` e não aparece na linha de comando ou na saída. Portas alternativas podem ser definidas por `WDE_DEMO_{POSTGRES,API,API_OPS,WORKER_OPS,CHAOS}_PORT`.
+
+Para manter o ambiente manual em execução:
+
 ```bash
 cp .env.example .env
 docker compose --profile core up --build
@@ -32,18 +43,21 @@ O profile `core` inicia PostgreSQL 17, executa a migration em um job separado e 
 Em outro terminal:
 
 ```bash
-curl -i http://127.0.0.1:9090/healthz
+curl -i http://127.0.0.1:9090/livez
 curl -i http://127.0.0.1:9090/readyz
+curl -i http://127.0.0.1:9090/metrics
 ```
 
 Para incluir o Chaos Lab isolado:
 
 ```bash
 docker compose --profile demo up --build
-curl -i http://127.0.0.1:8081/healthz
+curl -i http://127.0.0.1:8081/livez
 ```
 
-Todos os ports publicados pelo Compose fazem bind em loopback. As credenciais presentes em `.env.example` sao exclusivamente locais e descartaveis.
+Todos os ports publicados pelo Compose fazem bind em loopback. As credenciais presentes em `.env.example` sao exclusivamente locais e descartaveis. O Chaos Lab em container serve para inspeção direta; a demo ponta a ponta usa binários locais porque a política SSRF bloqueia corretamente endereços privados da bridge Docker.
+
+Os listeners operacionais usam loopback por padrão. Se um orquestrador exigir bind não-loopback, `/livez`, `/readyz` e `/metrics` devem permanecer em rede privada com ACL/NetworkPolicy explícita, sem ingress público; o processo não implementa autenticação nessa superfície.
 
 Antes da primeira chamada, crie o workspace e a API key com o comando one-shot (ele nao inicia listener e revela a chave uma unica vez):
 
@@ -55,7 +69,7 @@ go run ./cmd/api credentials bootstrap --name 'Demo local' \
   --output-file='./local-credentials.json'
 ```
 
-O arquivo criado contém `api_key`. O fluxo HTTP esta documentado em [`api/openapi.yaml`](api/openapi.yaml). Produção aceita somente destinos HTTPS; HTTP é permitido apenas em loopback nos profiles local/test com a flag explícita.
+O arquivo criado contém `api_key`. O [quickstart detalhado](docs/quickstart.md) traz os exemplos curl para endpoint, evento, consulta, replay, rotação e métricas; o contrato completo está em [`api/openapi.yaml`](api/openapi.yaml). Produção aceita somente destinos HTTPS; HTTP é permitido apenas em loopback nos profiles local/test com a flag explícita.
 
 ## Execucao sem containers
 
@@ -80,11 +94,16 @@ Principais variaveis:
 | `WDE_DATABASE_URL` | DSN da role especifica do processo |
 | `WDE_ADMIN_DATABASE_URL` | DSN usada exclusivamente pelos comandos one-shot de credenciais |
 | `WDE_DATABASE_TIMEOUT` | prazo para startup/readiness do banco; default `5s` |
+| `WDE_OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint OTLP/HTTP opcional; vazio mantém traces no-op |
+| `WDE_OTEL_EXPORT_TIMEOUT` | prazo bounded de export e flush; default `5s`, máximo `10s` |
+| `WDE_OTEL_TRACE_SAMPLE_RATIO` | amostragem entre `0` e `1`; default `0.1` |
 | `WDE_API_HTTP_ADDR` | listener da API; default `:8080` |
 | `WDE_API_OPERATIONAL_ADDR` | probes da API; default `127.0.0.1:9090` |
 | `WDE_WORKER_OPERATIONAL_ADDR` | probes do worker; default `127.0.0.1:9091` |
 | `WDE_CHAOSLAB_HTTP_ADDR` | listener local; default `127.0.0.1:8081` |
 | `WDE_ALLOW_HTTP_DESTINATIONS` | habilita explicitamente destinos HTTP loopback fora de produção |
+| `WDE_OTEL_EXPORT_TIMEOUT` | orçamento do export/flush, obrigatório entre `100ms` e `10s`; default `5s` |
+| `WDE_OTEL_TRACE_SAMPLE_RATIO` | razão local finita entre `0` e `1`; default `0.1`, nunca herdada do bit sampled remoto |
 | `WDE_EDGE_{MAX_IN_FLIGHT,GLOBAL,ORIGIN,PREFIX,WINDOW,MAX_BUCKETS}` | semáforo e limiter local bounded antes do lookup de credencial |
 | `WDE_QUOTA_<OPERACAO>_{GLOBAL,WORKSPACE,API_KEY}` | limites persistentes por janela para ingestao, escrita de endpoint, consulta e replay |
 | `WDE_QUOTA_REPLAY_RESOURCE` | limite de replay por delivery na janela; default `2/min` |
@@ -149,7 +168,13 @@ Peppers produtivos usam uma linha `v1:<base64url-sem-padding>` com exatamente 32
 
 Peppers de autenticação, idempotência, fingerprint, dimensões de quota e cursor, assim como os keyrings de payload/assinatura, devem ter materiais distintos. Arquivos vazios, formatos desconhecidos, chaves curtas, versões duplicadas e JSON com campos desconhecidos impedem o startup. A API e o worker também validam conexão, role PostgreSQL e versão da migration.
 
-`/healthz` e `/readyz` existem somente nos listeners operacionais: liveness indica processo vivo; readiness valida banco, role e schema a cada chamada e retorna `503` quando algum deles deixa de ser compativel ou acessivel. A superficie publica da API responde `404` para essas rotas. Os defaults operacionais e do Chaos Lab usam loopback; o Compose faz bind interno para containers e publica as portas somente em `127.0.0.1`.
+`/livez`, `/readyz` e `/metrics` existem somente nos listeners operacionais. Liveness indica apenas processo vivo. Readiness valida role/schema lógico v5, quarentena de restore e keyrings; no worker também exige scheduler ativo e retenção saudável. A superfície pública da API responde `404` para essas rotas. Não há `pprof` registrado em produção.
+
+Métricas usam somente dimensões bounded (`route`, método, classe HTTP, outcome e categoria). Nunca há workspace, endpoint, evento, delivery, IP ou URL em labels. Traces correlacionam request, evento, delivery e tentativa por IDs opacos; não capturam payload, API key, HMAC, URL, query, headers, ciphertext ou resposta externa. O exportador OTLP é opcional e sua indisponibilidade não interrompe ingestão/entrega. Em produção, o endpoint OTLP precisa usar HTTPS.
+
+O Chaos Lab local oferece `POST /success`, `/fail-n`, `/timeout`, `/rate-limit`, `/permanent-failure` e `/verify-signature`, além de `/configure`, `/reset` e o estado agregado seguro em `GET /state`. Parâmetros opcionais de teste têm limites estritos; os defaults funcionam em URLs de webhook sem query. Ele nunca ecoa corpo ou segredo.
+
+Um consumidor mínimo que valida o corpo bruto em tempo constante e rejeita timestamps fora da janela de cinco minutos está em [`examples/hmac-consumer`](examples/hmac-consumer). Durante rotação, consumidores devem aceitar as duas entradas separadas por `;` no header `WDE-Signature` até o fim do overlap.
 
 ## Comandos
 
@@ -165,6 +190,7 @@ make vuln
 make openapi-lint
 make migration-validate
 make build
+make quickstart
 make check
 ```
 
@@ -186,7 +212,9 @@ internal/delivery/   claim, envio HTTP e timeline
 internal/outboundhttp/ parser, resolução e dialer anti-SSRF
 internal/retention/  purge, exclusão e restore quarantine
 internal/signing/    protocolo HMAC v1
-internal/platform/   configuracao, criptografia, logging e lifecycle
+internal/platform/   configuracao, criptografia, logging, telemetria e lifecycle
+examples/            consumidor HMAC verificável
+scripts/             demonstração local efêmera
 db/migrations/       migrations versionadas e fail-closed
 deployments/         Dockerfiles e bootstrap local do PostgreSQL
 api/                 contrato OpenAPI

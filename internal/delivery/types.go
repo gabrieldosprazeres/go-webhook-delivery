@@ -21,6 +21,7 @@ var (
 
 type Claim struct {
 	WorkspaceID, DeliveryID, EventID, EndpointID uuid.UUID
+	AttemptID                                    uuid.UUID
 	FencingToken                                 int64
 	AttemptNumber, MaxAttempts                   int16
 	Scheme, Host                                 string
@@ -32,6 +33,15 @@ type Claim struct {
 	SecretVersionID                              uuid.UUID
 	Secret                                       cryptobox.Envelope
 	Retiring                                     *ClaimSecret
+}
+
+// Observer receives bounded lifecycle signals; implementations must never retain claim secrets.
+type Observer interface {
+	WorkerActive(bool)
+	Inflight(int)
+	StartClaim(context.Context, int) (context.Context, func(int, error))
+	StartAttempt(context.Context, Claim) (context.Context, func(Result, bool, error))
+	StartFinalization(context.Context, Claim) (context.Context, func(bool, error))
 }
 
 type ClaimSecret struct {

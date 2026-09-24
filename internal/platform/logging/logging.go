@@ -2,7 +2,6 @@
 package logging
 
 import (
-	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -53,7 +52,9 @@ func NewJSON(output io.Writer, opts Options) *slog.Logger {
 func isAllowedAttribute(key string) bool {
 	switch key {
 	case "service", "version", "environment", "request_id", "trace_id", "event_id",
-		"delivery_id", "attempt_id", "status", "code", "duration_ms", "count", "component":
+		"delivery_id", "attempt_id", "status", "code", "duration_ms", "count", "component",
+		"backlog", "oldest_age", "batches", "degraded", "deleted", "payloads", "secrets",
+		"attempts", "deliveries", "events", "audits", "buckets", "workspace_rows":
 		return true
 	default:
 		return false
@@ -68,14 +69,7 @@ func sanitizeAttribute(attr slog.Attr) slog.Attr {
 	case slog.KindBool, slog.KindDuration, slog.KindFloat64, slog.KindInt64, slog.KindTime, slog.KindUint64:
 		return slog.Attr{Key: attr.Key, Value: value}
 	case slog.KindAny:
-		switch item := value.Any().(type) {
-		case error:
-			return slog.String(attr.Key, truncate(item.Error()))
-		case fmt.Stringer:
-			return slog.String(attr.Key, truncate(item.String()))
-		default:
-			return slog.String(attr.Key, "<unsupported>")
-		}
+		return slog.String(attr.Key, "<redacted>")
 	default:
 		return slog.String(attr.Key, "<unsupported>")
 	}

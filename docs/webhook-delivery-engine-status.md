@@ -1,7 +1,7 @@
 # Status: Webhook Delivery Engine
 
 **Atualizado em:** 2026-09-24
-**Branch:** `feature/sprint-4-output-data-security`
+**Branch:** `feature/sprint-5-observability-demo`
 
 ## Planejamento
 
@@ -266,3 +266,52 @@ Sprint 3 apta para commit e integração em `main`; em seguida, iniciar a Sprint
 ## Próximo gate
 
 Sprint 4 aprovada em Code Review e QA, apta para commit e integração em `main`; em seguida, iniciar a Sprint 5 — Observabilidade e operação.
+
+## Sprint 5 — Observabilidade e demonstração
+
+- ✅ S5-01 — Métricas Prometheus e traces OpenTelemetry — implementada pelo Stack Agent
+- ✅ S5-02 — Probes e superfície operacional — implementada pelo Stack Agent
+- ✅ S5-03 — Chaos Lab completo — implementada pelo Stack Agent
+- ✅ S5-04 — OpenAPI e quickstart — implementada pelo Stack Agent
+- ✅ Code Review independente — rodada 2 aprovada, com zero blockers e zero warnings
+- ✅ QA independente — aprovado, 224/224 testes e subtestes na regressão real, zero skip e quickstart em 43,28 s
+
+### Evidências do Stack Agent
+
+- API e worker possuem registry Prometheus por processo com dimensões fechadas para HTTP, ingestão, tentativa, duração, retry, DLQ, fencing, fila, workers, inflight e retenção. Workspace, endpoint, evento, delivery, IP e URL nunca são labels.
+- OpenTelemetry usa provider local, no-op sem endpoint, OTLP/HTTP opcional, sampling configurável e batch/flush bounded. Exportador indisponível não afeta o negócio; produção exige HTTPS. Propagação envia somente `traceparent`, descartando baggage/tracestate não confiáveis.
+- Request spans recebem IDs opacos de evento/delivery e attempts possuem spans correlacionáveis; resolução/conexão de saída geram fases sem IP/hostname/URL/error bruto. Testes in-memory e scrapes usam canários de payload, API key, HMAC, query, header, resposta e auditoria.
+- Os listeners operacionais separados expõem apenas `/livez`, `/readyz` e `/metrics`. Readiness valida role/schema lógico v5, restore quarantine, keyrings e, no worker, scheduler ativo e retenção. Imagens distroless usam o próprio binário para healthcheck loopback; nenhum `pprof` é registrado em produção.
+- A migration física `000020` adiciona somente o agregado worker-only `delivery_queue_metrics()`, com executor `NOLOGIN`, `SECURITY DEFINER`, `search_path=pg_catalog`, timeout e grants mínimos; schema lógico permanece v5.
+- Chaos Lab oferece success, fail-N, timeout, 429/Retry-After, falha permanente e verificação HMAC inclusive dual-key; estado expõe apenas contadores/status e nunca payload ou segredo.
+- `make quickstart` cria ambiente PostgreSQL 17 efêmero, credencial sintética `0600` e demonstra assinatura, rotação, replay, retry, DLQ e observabilidade, com cleanup automático. O consumidor em `examples/hmac-consumer` valida corpo bruto em tempo constante e janela de cinco minutos.
+- O quickstart E2E passou integralmente em PostgreSQL 17 real. `make integration` também passou após as mudanças finais, cobrindo bootstrap, regressões S1–S4, fila agregada worker-only, pipeline HTTP e shutdown por sinal.
+- `make check` final passou com módulos organizados, unitários, integração, race detector, `vet`, Staticcheck, `govulncheck` sem vulnerabilidades alcançáveis, OpenAPI, Goose validate e build dos três binários.
+- `docker compose --profile demo config --quiet`, `git diff --check` e os limites físicos passaram; nenhum arquivo Go de produção ou migration da Sprint 5 excede 200 linhas.
+
+### Correções após Code Review — rodada 1
+
+- Parents remotos sampled/unsampled agora obedecem à razão local; timeout zero, razões `NaN`/infinitas e todos os limites inválidos falham fechado.
+- Chaos Lab limita oito cenários concorrentes, rejeita overflow imediatamente e mantém timeouts de servidor; o conjunto de chaves continua limitado a quatro.
+- API/worker compartilham um único deadline absoluto de shutdown entre HTTP, core e flush. Falha de exportação permanece observacional e não mascara o encerramento.
+- Transações tenant-scoped, claim e finalização possuem spans filhos seguros com resultados allowlisted, sem erro bruto, tenant, payload ou URL.
+- A documentação exige ACL/rede privada para bind operacional não-loopback. O quickstart repete replay com chave e corpo idênticos e valida command, delivery, run e marcador duplicate sem mutação adicional.
+- Após as correções, os probes focados passaram vinte vezes, inclusive sob race; o quickstart E2E, migrations `up/down/up`, `make integration` em PostgreSQL 17 e `make check` integral ficaram verdes.
+- Na rodada 2, o nome do span HTTP passou a usar o mesmo método allowlisted das métricas/atributos; método remoto arbitrário resulta em `OTHER` e o canário não alcança nenhum sink.
+
+### QA da Sprint 5
+
+**Veredicto:** ✅ Aprovado em 2026-09-24.
+
+- `make check` passou após os testes de QA com unitários, race detector, `vet`, Staticcheck, `govulncheck`, OpenAPI, Goose validate e build dos três binários.
+- A regressão final em PostgreSQL 17.11 executou 224/224 testes e subtestes em 24 pacotes, com zero skip e zero falha; `make integration` preservou regressões S1–S4 e passou queue metrics, pipeline HTTP e `SIGTERM`.
+- `make quickstart` concluiu HMAC, assinatura dupla, retry, DLQ, replay duplicado estável e telemetria em 43,28 segundos, com cleanup completo.
+- Telemetria/config/probes/runtime/tenanttx/Chaos/HMAC passaram vinte repetições sob race; shutdown da API passou cinquenta repetições e scheduler focado vinte.
+- A função `delivery_queue_metrics()` passou vinte repetições sob race, três ciclos completos de boundaries e `down-to 19 → up 20`; ACL, owner executor, `search_path` e timeout foram confirmados diretamente.
+- Probes reais confirmaram superfície pública sem live/ready/metrics/pprof, listeners operacionais em loopback, liveness/metrics durante quarantine, readiness `503` e retorno a `200` após reconcile.
+- O QA acrescentou somente testes para pprof/superfície pública, fail-closed de keyrings e spans DNS/connect parented/redacted. Nenhum código de produção foi modificado.
+- Relatório completo: `docs/webhook-delivery-engine-qa-sprint-5.md`.
+
+### Próximo gate
+
+Sprint 5 aprovada em Code Review e QA, apta para commit e integração em `main`; em seguida, iniciar a Sprint 6 — Hardening e release de portfólio.

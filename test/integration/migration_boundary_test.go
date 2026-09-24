@@ -39,6 +39,7 @@ const (
 	backlogStage   = "wde.retention_backlog_v5_stage()"
 	workspaceV5    = "wde.purge_workspace(integer)"
 	workspaceStage = "wde.purge_workspace_v5_stage(integer)"
+	queueMetricsV5 = "wde.delivery_queue_metrics()"
 )
 
 func TestMigrationBoundariesRemainFailClosed(t *testing.T) {
@@ -66,11 +67,11 @@ func TestMigrationBoundariesRemainFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, version := range []int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19} {
+	for _, version := range []int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20} {
 		runGooseBoundary(t, ctx, root, boundarySuper, "up-to", version)
 		assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, version)
 	}
-	for _, version := range []int{18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2} {
+	for _, version := range []int{19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2} {
 		runGooseBoundary(t, ctx, root, boundarySuper, "down-to", version)
 		assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, version)
 	}
@@ -78,8 +79,8 @@ func TestMigrationBoundariesRemainFailClosed(t *testing.T) {
 	// Prova que o downgrade completo para o contrato v2 permanece reversivel:
 	// o runtime v3 falha fechado em v2 e volta a iniciar somente quando toda a
 	// cadeia 000003..000006 e reaplicada atomicamente.
-	runGooseBoundary(t, ctx, root, boundarySuper, "up-to", 19)
-	assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, 19)
+	runGooseBoundary(t, ctx, root, boundarySuper, "up-to", 20)
+	assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, 20)
 }
 
 func runGooseBoundary(t *testing.T, ctx context.Context, root, databaseURL, direction string, version int) {
@@ -103,7 +104,7 @@ func assertMigrationBoundary(t *testing.T, ctx context.Context, superURL, worker
 	if physical >= 10 {
 		logical = 4
 	}
-	if physical == 19 {
+	if physical >= 19 {
 		logical = 5
 	}
 	var schemaVersion, gooseVersion int
@@ -138,22 +139,23 @@ func assertMigrationBoundary(t *testing.T, ctx context.Context, superURL, worker
 	assertAPIFunctionState(t, ctx, super, quotaV4, physical >= 10, physical >= 10)
 	assertAPIFunctionState(t, ctx, super, replayV4, physical >= 10, physical >= 10)
 	assertAPIFunctionState(t, ctx, super, rotationStage, physical >= 12 && physical <= 18, false)
-	assertAPIFunctionState(t, ctx, super, rotationV5, physical == 19, physical == 19)
+	assertAPIFunctionState(t, ctx, super, rotationV5, physical >= 19, physical >= 19)
 	assertFunctionState(t, ctx, super, claimV5Stage, physical == 18, false)
 	assertFunctionState(t, ctx, super, metadataStage, physical >= 14 && physical <= 18, false)
-	assertFunctionState(t, ctx, super, metadataV5, physical == 19, physical == 19)
+	assertFunctionState(t, ctx, super, metadataV5, physical >= 19, physical >= 19)
 	assertFunctionState(t, ctx, super, backlogStage, physical >= 15 && physical <= 18, false)
-	assertFunctionState(t, ctx, super, backlogV5, physical == 19, physical == 19)
+	assertFunctionState(t, ctx, super, backlogV5, physical >= 19, physical >= 19)
 	assertFunctionState(t, ctx, super, workspaceStage, physical >= 17 && physical <= 18, false)
-	assertFunctionState(t, ctx, super, workspaceV5, physical == 19, physical == 19)
+	assertFunctionState(t, ctx, super, workspaceV5, physical >= 19, physical >= 19)
+	assertFunctionState(t, ctx, super, queueMetricsV5, physical == 20, physical == 20)
 
 	worker := mustPool(t, ctx, workerURL)
 	defer worker.Close()
 	err := database.Check(ctx, worker, database.RoleWorker)
-	if physical == 19 && err != nil {
+	if physical >= 19 && err != nil {
 		t.Fatalf("v5 runtime rejected complete boundary: %v", err)
 	}
-	if physical != 19 && !errors.Is(err, database.ErrIncompatibleSchema) {
+	if physical < 19 && !errors.Is(err, database.ErrIncompatibleSchema) {
 		t.Fatalf("v5 runtime did not fail closed at boundary %d: %v", physical, err)
 	}
 }

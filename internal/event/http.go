@@ -9,6 +9,7 @@ import (
 
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/auth"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/problem"
+	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/telemetry"
 )
 
 type Handler struct{ service *Service }
@@ -45,6 +46,11 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 		problem.Write(w, r, http.StatusInternalServerError, "internal_error", "Internal server error")
 		return
 	}
+	deliveryIDs := make([]string, len(result.DeliveryIDs))
+	for index, id := range result.DeliveryIDs {
+		deliveryIDs[index] = id.String()
+	}
+	telemetry.AnnotateAccepted(r.Context(), result.EventID.String(), deliveryIDs)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusAccepted)

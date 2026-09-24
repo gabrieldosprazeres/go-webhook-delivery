@@ -11,7 +11,7 @@ import (
 )
 
 func TestPublicListenerDoesNotExposeProbes(t *testing.T) {
-	for _, path := range []string{"/healthz", "/readyz"} {
+	for _, path := range []string{"/healthz", "/livez", "/readyz", "/metrics", "/debug/pprof/"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
 		publicRoutes().ServeHTTP(response, request)

@@ -116,6 +116,8 @@ Modos canônicos:
 
 A saída deve informar cenário, contador de chamadas e resultado da assinatura, sem imprimir segredo ou payload por padrão.
 
+Contrato local materializado: `POST /success`, `/fail-n`, `/rate-limit`, `/timeout`, `/permanent-failure` e `/verify-signature`. `POST /configure` registra uma chave sintética para verificação, `POST /reset` zera apenas contadores e `GET /state` retorna somente cenário/status/contagens. Parâmetros de teste são opcionais e bounded; URLs cadastradas no Engine usam os defaults sem query, em conformidade com a política anti-SSRF.
+
 ## 6. Mascaramento e conteúdo sensível
 
 - API keys: mostrar apenas prefixo identificador, como `wde_live_a1b2…`.
@@ -216,4 +218,3 @@ Não haverá acesso por URL previsível sem autenticação e verificação de wo
 - A arquitetura não deve incluir frontend no MVP.
 - Qualquer CLI futura consumirá a API pública, sem acesso direto ao banco.
 - Campos sensíveis devem ter política de exibição, log e retenção antes de serem implementados.
-

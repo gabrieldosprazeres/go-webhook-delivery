@@ -31,7 +31,7 @@ func (cfg Config) validateCommon() error {
 		return errors.New("config: WDE_LOG_LEVEL must be debug, info, warn or error")
 	}
 	if cfg.ShutdownTimeout <= 0 || cfg.ShutdownTimeout > maxShutdownTimeout {
-		return errors.New("config: WDE_SHUTDOWN_TIMEOUT must be between 1ns and 2m")
+		return errors.New("config: WDE_SHUTDOWN_TIMEOUT must be between 1ns and 30s")
 	}
 	if cfg.DatabaseTimeout <= 0 || cfg.DatabaseTimeout > maxDatabaseTimeout {
 		return errors.New("config: WDE_DATABASE_TIMEOUT must be between 1ns and 30s")
@@ -45,6 +45,9 @@ func (cfg Config) validateCommon() error {
 		return err
 	}
 	if err := cfg.validateEdge(); err != nil {
+		return err
+	}
+	if err := cfg.validateTelemetry(); err != nil {
 		return err
 	}
 	return cfg.validateAddresses()
