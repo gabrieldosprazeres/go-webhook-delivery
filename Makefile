@@ -2,7 +2,7 @@
 
 GO ?= go
 
-.PHONY: help fmt fmt-check tidy-check test integration race vet staticcheck vuln build check \
+.PHONY: help fmt fmt-check tidy-check test integration race vet staticcheck vuln openapi-lint build check \
 	migration-validate migrate-up migrate-status compose-config compose-up compose-demo compose-down
 
 help: ## Lista os comandos disponiveis.
@@ -24,6 +24,8 @@ integration: ## Executa schema, concorrencia e E2E; exige as quatro WDE_TEST_*_D
 	@test -n "$$WDE_TEST_API_DATABASE_URL" -a -n "$$WDE_TEST_WORKER_DATABASE_URL" -a -n "$$WDE_TEST_ADMIN_DATABASE_URL" -a -n "$$WDE_TEST_SUPERUSER_DATABASE_URL"
 	$(GO) test ./test/integration -run '^TestCredentialBootstrapIsSerializedAndRevocable$$' -count=1 -v
 	$(GO) test ./test/integration -run '^(TestTenantContextAndAppendOnlyACL|TestConcurrentIdempotency|TestClaimWithoutCompleteSnapshotDoesNotMutateDelivery|TestEndpointEventWorkerChaosLabSucceeded|TestMigrationBoundariesRemainFailClosed|TestBatchClaimFairnessAndConcurrentWorkers|TestLockedWorkspaceDoesNotBlockIndependentClaim|TestClaimPlanUsesReadyIndexAtRepresentativeScale|TestPersistentFairnessAcrossSingleSlotCycles|TestPersistentFairnessWithConcurrentSingleSlotWorkers|TestEndpointCapacityDoesNotStarveHealthyEndpoint|TestLeaseRecoveryFencingAndAbandonedAttempt|TestRetryHistoryDeadLetterAndNeverMaxPlusOne|TestRepeatedCrashesStopAtMaximumAttempts|TestHostileHTTPStatusDoesNotBreakFinalizeOrNextTenant)$$' -count=1 -v
+	$(GO) test ./test/integration -run '^(TestTenantTransactionDoesNotLeakAfterCommitRollbackOrPanic|TestPersistentQuotaIsAtomicAcrossDimensionsRestartAndExpiry|TestPersistentQuotaGlobalBucketContentionIsExact|TestFanoutAndPaginationLimitsAreEnforced|TestReplayGenerationIsConcurrentIdempotentAndPreservesHistory|TestReplayConflictAndPurgedPayloadFailClosed|TestReplayHTTPContractScopeAndTenantIsolation|TestOperationsACLAndAuditSnapshotsAreImmutable)$$' -count=1 -v
+	$(GO) test ./cmd/api -run '^TestProductionRoutePipelineBoundsAuthScopeAndCrossTenantQuota$$' -count=1 -v
 	$(GO) test ./cmd/worker -run '^TestWorkerProcessSIGTERM$$' -count=1 -v
 
 race: ## Executa todos os testes com o race detector.
@@ -37,6 +39,9 @@ staticcheck: ## Executa o Staticcheck pinado no modulo.
 
 vuln: ## Verifica vulnerabilidades alcancaveis no codigo Go.
 	$(GO) tool govulncheck ./...
+
+openapi-lint: ## Carrega, resolve referencias e valida semanticamente o contrato OpenAPI.
+	$(GO) test ./api -run '^TestOpenAPIContract$$' -count=1
 
 build: ## Compila os tres binarios em bin/.
 	mkdir -p bin
@@ -67,4 +72,4 @@ compose-demo: ## Sobe o core e o Chaos Lab local.
 compose-down: ## Encerra os containers preservando o volume PostgreSQL.
 	docker compose --profile demo down
 
-check: fmt-check tidy-check test race vet staticcheck vuln migration-validate build ## Executa todos os gates locais da implementacao atual.
+check: fmt-check tidy-check test race vet staticcheck vuln openapi-lint migration-validate build ## Executa todos os gates locais da implementacao atual.

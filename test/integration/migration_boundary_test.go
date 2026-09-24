@@ -18,12 +18,18 @@ import (
 )
 
 const (
-	claimV2    = "wde.claim_delivery(uuid,uuid,interval)"
-	claimV3    = "wde.claim_deliveries(uuid,uuid[],interval,integer,integer,integer)"
-	claimStage = "wde.claim_deliveries_v3_stage(uuid,uuid[],interval,integer,integer,integer)"
-	finalizeV2 = "wde.finalize_delivery(uuid,uuid,uuid,bigint,boolean,smallint,integer,text)"
-	finalizeV3 = "wde.finalize_delivery(uuid,uuid,uuid,bigint,text,smallint,integer,text,interval)"
-	finalStage = "wde.finalize_delivery_v3_stage(uuid,uuid,uuid,bigint,text,smallint,integer,text,interval)"
+	claimV2     = "wde.claim_delivery(uuid,uuid,interval)"
+	claimV3     = "wde.claim_deliveries(uuid,uuid[],interval,integer,integer,integer)"
+	claimStage  = "wde.claim_deliveries_v3_stage(uuid,uuid[],interval,integer,integer,integer)"
+	finalizeV2  = "wde.finalize_delivery(uuid,uuid,uuid,bigint,boolean,smallint,integer,text)"
+	finalizeV3  = "wde.finalize_delivery(uuid,uuid,uuid,bigint,text,smallint,integer,text,interval)"
+	finalStage  = "wde.finalize_delivery_v3_stage(uuid,uuid,uuid,bigint,text,smallint,integer,text,interval)"
+	auditV4     = "wde.append_audit_event(uuid,uuid,text,text,text,text,text,text,text,text)"
+	auditStage  = "wde.append_audit_event_v4_stage(uuid,uuid,text,text,text,text,text,text,text,text)"
+	quotaV4     = "wde.consume_quota(bytea,text,text,uuid,uuid,uuid,integer,integer)"
+	quotaStage  = "wde.consume_quota_v4_stage(bytea,text,text,uuid,uuid,uuid,integer,integer)"
+	replayV4    = "wde.request_replay(uuid,uuid,uuid,uuid,text,bytea,bytea,smallint,text,text)"
+	replayStage = "wde.request_replay_v4_stage(uuid,uuid,uuid,uuid,text,bytea,bytea,smallint,text,text)"
 )
 
 func TestMigrationBoundariesRemainFailClosed(t *testing.T) {
@@ -51,11 +57,11 @@ func TestMigrationBoundariesRemainFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, version := range []int{3, 4, 5, 6} {
+	for _, version := range []int{3, 4, 5, 6, 7, 8, 9, 10} {
 		runGooseBoundary(t, ctx, root, boundarySuper, "up-to", version)
 		assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, version)
 	}
-	for _, version := range []int{5, 4, 3, 2} {
+	for _, version := range []int{9, 8, 7, 6, 5, 4, 3, 2} {
 		runGooseBoundary(t, ctx, root, boundarySuper, "down-to", version)
 		assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, version)
 	}
@@ -63,8 +69,8 @@ func TestMigrationBoundariesRemainFailClosed(t *testing.T) {
 	// Prova que o downgrade completo para o contrato v2 permanece reversivel:
 	// o runtime v3 falha fechado em v2 e volta a iniciar somente quando toda a
 	// cadeia 000003..000006 e reaplicada atomicamente.
-	runGooseBoundary(t, ctx, root, boundarySuper, "up-to", 6)
-	assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, 6)
+	runGooseBoundary(t, ctx, root, boundarySuper, "up-to", 10)
+	assertMigrationBoundary(t, ctx, boundarySuper, boundaryWorker, 10)
 }
 
 func runGooseBoundary(t *testing.T, ctx context.Context, root, databaseURL, direction string, version int) {
@@ -82,8 +88,11 @@ func assertMigrationBoundary(t *testing.T, ctx context.Context, superURL, worker
 	super := mustPool(t, ctx, superURL)
 	defer super.Close()
 	logical := 2
-	if physical == 6 {
+	if physical >= 6 {
 		logical = 3
+	}
+	if physical == 10 {
+		logical = 4
 	}
 	var schemaVersion, gooseVersion int
 	if err := super.QueryRow(ctx, `SELECT wde.schema_version(),
@@ -94,7 +103,7 @@ func assertMigrationBoundary(t *testing.T, ctx context.Context, superURL, worker
 		t.Fatalf("boundary=%d schema=%d goose=%d", physical, schemaVersion, gooseVersion)
 	}
 
-	if physical == 6 {
+	if physical >= 6 {
 		assertFunctionState(t, ctx, super, claimV2, false, false)
 		assertFunctionState(t, ctx, super, finalizeV2, false, false)
 		assertFunctionState(t, ctx, super, claimV3, true, true)
@@ -110,15 +119,39 @@ func assertMigrationBoundary(t *testing.T, ctx context.Context, superURL, worker
 	}
 	assertFunctionState(t, ctx, super, claimStage, physical == 5, false)
 	assertFunctionState(t, ctx, super, finalStage, physical >= 3 && physical <= 5, false)
+	assertFunctionState(t, ctx, super, auditStage, physical >= 8 && physical <= 9, false)
+	assertFunctionState(t, ctx, super, quotaStage, physical >= 8 && physical <= 9, false)
+	assertFunctionState(t, ctx, super, replayStage, physical == 9, false)
+	assertAPIFunctionState(t, ctx, super, auditV4, physical == 10, physical == 10)
+	assertAPIFunctionState(t, ctx, super, quotaV4, physical == 10, physical == 10)
+	assertAPIFunctionState(t, ctx, super, replayV4, physical == 10, physical == 10)
 
 	worker := mustPool(t, ctx, workerURL)
 	defer worker.Close()
 	err := database.Check(ctx, worker, database.RoleWorker)
-	if physical == 6 && err != nil {
-		t.Fatalf("v3 runtime rejected complete boundary: %v", err)
+	if physical == 10 && err != nil {
+		t.Fatalf("v4 runtime rejected complete boundary: %v", err)
 	}
-	if physical != 6 && !errors.Is(err, database.ErrIncompatibleSchema) {
-		t.Fatalf("v3 runtime did not fail closed at boundary %d: %v", physical, err)
+	if physical != 10 && !errors.Is(err, database.ErrIncompatibleSchema) {
+		t.Fatalf("v4 runtime did not fail closed at boundary %d: %v", physical, err)
+	}
+}
+
+func assertAPIFunctionState(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
+	signature string, wantExists, wantAPIExecute bool,
+) {
+	t.Helper()
+	var exists, apiExecute, publicExecute bool
+	err := pool.QueryRow(ctx, `SELECT to_regprocedure($1) IS NOT NULL,
+		COALESCE(has_function_privilege('wde_api',to_regprocedure($1),'EXECUTE'),false),
+		COALESCE(has_function_privilege('public',to_regprocedure($1),'EXECUTE'),false)`, signature).
+		Scan(&exists, &apiExecute, &publicExecute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists != wantExists || apiExecute != wantAPIExecute || publicExecute {
+		t.Fatalf("%s exists=%v api=%v public=%v want=%v/%v/false",
+			signature, exists, apiExecute, publicExecute, wantExists, wantAPIExecute)
 	}
 }
 

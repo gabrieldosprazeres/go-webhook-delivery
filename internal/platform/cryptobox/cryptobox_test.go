@@ -24,3 +24,21 @@ func TestSealOpenAndAADBinding(t *testing.T) {
 		t.Fatal("expected AAD authentication failure")
 	}
 }
+
+func TestDevelopmentPeppersAreDomainSeparated(t *testing.T) {
+	materials, err := Load(config.ProfileTest, config.SecretFiles{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[[32]byte]string{}
+	for name, pepper := range map[string][32]byte{
+		"auth": materials.AuthPepper, "idempotency": materials.IdempotencyPepper,
+		"fingerprint": materials.FingerprintPepper, "rate-limit": materials.RateLimitPepper,
+		"cursor": materials.CursorPepper,
+	} {
+		if previous, duplicate := seen[pepper]; duplicate {
+			t.Fatalf("pepper %s reuses %s", name, previous)
+		}
+		seen[pepper] = name
+	}
+}

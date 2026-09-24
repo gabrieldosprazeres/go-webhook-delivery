@@ -133,6 +133,52 @@ func TestWorkerReliabilityConfiguration(t *testing.T) {
 	}
 }
 
+func TestAPIQuotaConfigurationIsTypedAndValidated(t *testing.T) {
+	base := map[string]string{
+		"WDE_PROFILE": "test", "WDE_DATABASE_URL": "postgres://test:test@localhost:5432/wde?sslmode=disable",
+		"WDE_QUOTA_REPLAY_GLOBAL": "50", "WDE_QUOTA_REPLAY_WORKSPACE": "7",
+		"WDE_QUOTA_REPLAY_API_KEY": "5", "WDE_QUOTA_REPLAY_RESOURCE": "2",
+		"WDE_QUOTA_REPLAY_WINDOW": "30s",
+	}
+	cfg, err := Load(LoadOptions{Service: ServiceAPI, LookupEnv: mapLookup(base)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Quotas.Replay.Global != 50 || cfg.Quotas.Replay.Workspace != 7 ||
+		cfg.Quotas.Replay.APIKey != 5 || cfg.Quotas.Replay.Resource != 2 ||
+		cfg.Quotas.Replay.Window != 30*time.Second {
+		t.Fatalf("replay quota=%+v", cfg.Quotas.Replay)
+	}
+	invalid := maps.Clone(base)
+	invalid["WDE_QUOTA_REPLAY_API_KEY"] = "8"
+	if _, err = Load(LoadOptions{Service: ServiceAPI, LookupEnv: mapLookup(invalid)}); err == nil ||
+		!strings.Contains(err.Error(), "quota") {
+		t.Fatalf("invalid quota error=%v", err)
+	}
+}
+
+func TestAPIEdgeLimiterConfigurationIsTypedAndValidated(t *testing.T) {
+	base := map[string]string{
+		"WDE_PROFILE": "test", "WDE_DATABASE_URL": "postgres://test:test@localhost:5432/wde?sslmode=disable",
+		"WDE_EDGE_MAX_IN_FLIGHT": "32", "WDE_EDGE_GLOBAL": "500",
+		"WDE_EDGE_ORIGIN": "40", "WDE_EDGE_PREFIX": "20",
+		"WDE_EDGE_MAX_BUCKETS": "128", "WDE_EDGE_WINDOW": "30s",
+	}
+	cfg, err := Load(LoadOptions{Service: ServiceAPI, LookupEnv: mapLookup(base)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Edge.MaxInFlight != 32 || cfg.Edge.Prefix != 20 || cfg.Edge.Window != 30*time.Second {
+		t.Fatalf("edge config=%+v", cfg.Edge)
+	}
+	invalid := maps.Clone(base)
+	invalid["WDE_EDGE_MAX_BUCKETS"] = "4"
+	if _, err = Load(LoadOptions{Service: ServiceAPI, LookupEnv: mapLookup(invalid)}); err == nil ||
+		!strings.Contains(err.Error(), "edge limiter") {
+		t.Fatalf("edge validation error=%v", err)
+	}
+}
+
 func TestProductionRejectsUnsafeDatabaseWithoutLeakingIt(t *testing.T) {
 	const databaseURL = "postgres://sensitive-user:top-secret@db.example:5432/wde?sslmode=disable"
 	_, err := Load(LoadOptions{
@@ -176,6 +222,8 @@ func TestProductionAPIAcceptsDistinctVersionedSecretFiles(t *testing.T) {
 		"WDE_AUTH_PEPPER_FILE":        writePepper(t, dir, "auth.pepper", 1),
 		"WDE_IDEMPOTENCY_PEPPER_FILE": writePepper(t, dir, "idempotency.pepper", 2),
 		"WDE_FINGERPRINT_PEPPER_FILE": writePepper(t, dir, "fingerprint.pepper", 3),
+		"WDE_RATE_LIMIT_PEPPER_FILE":  writePepper(t, dir, "rate-limit.pepper", 6),
+		"WDE_CURSOR_PEPPER_FILE":      writePepper(t, dir, "cursor.pepper", 7),
 		"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload.json", 4),
 		"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing.json", 5),
 	}
@@ -209,8 +257,48 @@ func TestProductionRejectsReusedCryptographicMaterial(t *testing.T) {
 					"WDE_AUTH_PEPPER_FILE":        sharedPepper,
 					"WDE_IDEMPOTENCY_PEPPER_FILE": sharedPepper,
 					"WDE_FINGERPRINT_PEPPER_FILE": writePepper(t, dir, "fingerprint.pepper", 2),
+					"WDE_RATE_LIMIT_PEPPER_FILE":  writePepper(t, dir, "rate-limit.pepper", 5),
+					"WDE_CURSOR_PEPPER_FILE":      writePepper(t, dir, "cursor.pepper", 6),
 					"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload.json", 3),
 					"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing.json", 4),
+				}
+			},
+			wantInError: "distinct key material",
+		},
+		{
+			name: "authentication and rate limit peppers",
+			configure: func(t *testing.T, dir string) map[string]string {
+				sharedPepper := writePepper(t, dir, "shared-rate.pepper", 7)
+				return map[string]string{
+					"WDE_PROFILE":                 "production",
+					"WDE_DATABASE_URL":            "postgres://api@example.com:5432/wde?sslmode=verify-full",
+					"WDE_INGRESS_TLS_TERMINATED":  "true",
+					"WDE_AUTH_PEPPER_FILE":        sharedPepper,
+					"WDE_IDEMPOTENCY_PEPPER_FILE": writePepper(t, dir, "idempotency-rate.pepper", 8),
+					"WDE_FINGERPRINT_PEPPER_FILE": writePepper(t, dir, "fingerprint-rate.pepper", 9),
+					"WDE_RATE_LIMIT_PEPPER_FILE":  sharedPepper,
+					"WDE_CURSOR_PEPPER_FILE":      writePepper(t, dir, "cursor-rate.pepper", 12),
+					"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload-rate.json", 10),
+					"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing-rate.json", 11),
+				}
+			},
+			wantInError: "distinct key material",
+		},
+		{
+			name: "rate limit and cursor peppers",
+			configure: func(t *testing.T, dir string) map[string]string {
+				sharedPepper := writePepper(t, dir, "shared-cursor.pepper", 13)
+				return map[string]string{
+					"WDE_PROFILE":                 "production",
+					"WDE_DATABASE_URL":            "postgres://api@example.com:5432/wde?sslmode=verify-full",
+					"WDE_INGRESS_TLS_TERMINATED":  "true",
+					"WDE_AUTH_PEPPER_FILE":        writePepper(t, dir, "auth-cursor.pepper", 14),
+					"WDE_IDEMPOTENCY_PEPPER_FILE": writePepper(t, dir, "idempotency-cursor.pepper", 15),
+					"WDE_FINGERPRINT_PEPPER_FILE": writePepper(t, dir, "fingerprint-cursor.pepper", 16),
+					"WDE_RATE_LIMIT_PEPPER_FILE":  sharedPepper,
+					"WDE_CURSOR_PEPPER_FILE":      sharedPepper,
+					"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload-cursor.json", 17),
+					"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing-cursor.json", 18),
 				}
 			},
 			wantInError: "distinct key material",
@@ -270,6 +358,7 @@ func TestProductionRejectsSecretSymlink(t *testing.T) {
 		WorkerPollInterval: 250 * time.Millisecond, WorkerClaimTimeout: 200 * time.Millisecond,
 		WorkerRequestTimeout: 10 * time.Second,
 		WorkerLeaseTTL:       30 * time.Second, WorkerRetryBase: time.Second, WorkerRetryCap: 15 * time.Minute,
+		Edge: defaultEdgeConfig(), Quotas: defaultQuotas(),
 		Secrets: SecretFiles{PayloadKeyring: link, SigningKeyring: link},
 	}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "symlink") {
@@ -326,6 +415,8 @@ func TestProductionRejectsShortPepper(t *testing.T) {
 			"WDE_AUTH_PEPPER_FILE":        authPepper,
 			"WDE_IDEMPOTENCY_PEPPER_FILE": writePepper(t, dir, "idempotency.pepper", 2),
 			"WDE_FINGERPRINT_PEPPER_FILE": writePepper(t, dir, "fingerprint.pepper", 3),
+			"WDE_RATE_LIMIT_PEPPER_FILE":  writePepper(t, dir, "rate-limit.pepper", 6),
+			"WDE_CURSOR_PEPPER_FILE":      writePepper(t, dir, "cursor.pepper", 7),
 			"WDE_PAYLOAD_KEYRING_FILE":    writeKeyring(t, dir, "payload.json", 4),
 			"WDE_SIGNING_KEYRING_FILE":    writeKeyring(t, dir, "signing.json", 5),
 		}),

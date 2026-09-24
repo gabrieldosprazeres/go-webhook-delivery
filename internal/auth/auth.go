@@ -53,6 +53,12 @@ func NewAuthenticator(lookup Lookup, pepper [32]byte) *Authenticator {
 }
 
 func (a *Authenticator) Middleware(scope string, next http.Handler) http.Handler {
+	return a.Authenticate(a.Authorize(scope, next))
+}
+
+// Authenticate resolves a credential and establishes its principal without
+// authorizing a route scope. Quotas can therefore run between both decisions.
+func (a *Authenticator) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, prefix, ok := bearer(r.Header.Get("Authorization"))
 		if !ok {
@@ -74,12 +80,24 @@ func (a *Authenticator) Middleware(scope string, next http.Handler) http.Handler
 		for _, item := range record.Scopes {
 			scopes[item] = struct{}{}
 		}
-		if _, allowed := scopes[scope]; !allowed {
+		principal := Principal{APIKeyID: record.APIKeyID, WorkspaceID: record.WorkspaceID, Scopes: scopes}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, principal)))
+	})
+}
+
+// Authorize checks a scope only after authentication and authenticated quotas.
+func (a *Authenticator) Authorize(scope string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := PrincipalFrom(r.Context())
+		if !ok {
+			problem.Write(w, r, http.StatusUnauthorized, "unauthorized", "Authentication required")
+			return
+		}
+		if _, allowed := principal.Scopes[scope]; !allowed {
 			problem.Write(w, r, http.StatusForbidden, "insufficient_scope", "Insufficient scope")
 			return
 		}
-		principal := Principal{APIKeyID: record.APIKeyID, WorkspaceID: record.WorkspaceID, Scopes: scopes}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, principal)))
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -107,6 +125,13 @@ func bearer(header string) (string, string, bool) {
 	}
 	clear(secret)
 	return token, parts[2], true
+}
+
+// PresentedPrefix returns a syntactically valid, unauthenticated token prefix.
+// It is suitable only for best-effort local throttling, never as identity.
+func PresentedPrefix(header string) (string, bool) {
+	_, prefix, ok := bearer(header)
+	return prefix, ok
 }
 
 func Generate(test bool, pepper [32]byte) (token string, prefix string, verifier [32]byte, err error) {

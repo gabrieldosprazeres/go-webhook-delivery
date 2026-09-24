@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -66,10 +67,18 @@ func (s *AdminStore) Bootstrap(ctx context.Context, name string, sink Credential
 	if _, err := tx.Exec(ctx, `INSERT INTO wde.api_keys (id,workspace_id,prefix,verifier) VALUES ($1,$2,$3,$4)`, keyID, workspaceID, prefix, verifier[:]); err != nil {
 		return BootstrapResult{}, err
 	}
-	for _, scope := range []string{"deliveries:read", "endpoints:write", "events:write"} {
+	for _, scope := range []string{"deliveries:read", "deliveries:retry", "endpoints:write", "events:write"} {
 		if _, err := tx.Exec(ctx, `INSERT INTO wde.api_key_scopes (workspace_id,api_key_id,scope) VALUES ($1,$2,$3)`, workspaceID, keyID, scope); err != nil {
 			return BootstrapResult{}, err
 		}
+	}
+	auditID, err := uuid.NewV7()
+	if err != nil {
+		return BootstrapResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT wde.append_audit_event($1,$2,'admin_cli','bootstrap','credential.bootstrap','workspace',$3,$4,'accepted',NULL)`,
+		auditID, workspaceID, workspaceID.String(), "cli_"+auditID.String()); err != nil {
+		return BootstrapResult{}, err
 	}
 	result := BootstrapResult{WorkspaceID: workspaceID, APIKeyID: keyID, Token: token}
 	cleanup, err := sink(result)
@@ -90,6 +99,33 @@ func (s *AdminStore) Bootstrap(ctx context.Context, name string, sink Credential
 }
 
 func (s *AdminStore) Revoke(ctx context.Context, prefix string) (bool, error) {
-	result, err := s.pool.Exec(ctx, `UPDATE wde.api_keys SET status='revoked', revoked_at=clock_timestamp() WHERE prefix=$1 AND status='active'`, prefix)
-	return result.RowsAffected() == 1, err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var keyID, workspaceID uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT id,workspace_id FROM wde.api_keys WHERE prefix=$1 AND status='active' FOR UPDATE`, prefix).
+		Scan(&keyID, &workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE wde.api_keys SET status='revoked',revoked_at=clock_timestamp() WHERE id=$1`, keyID); err != nil {
+		return false, err
+	}
+	auditID, err := uuid.NewV7()
+	if err != nil {
+		return false, err
+	}
+	if _, err = tx.Exec(ctx, `SELECT wde.append_audit_event($1,$2,'admin_cli','revoke','credential.revoke','api_key',$3,$4,'revoked',NULL)`,
+		auditID, workspaceID, keyID.String(), "cli_"+auditID.String()); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }

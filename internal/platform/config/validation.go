@@ -41,6 +41,12 @@ func (cfg Config) validateCommon() error {
 			return err
 		}
 	}
+	if err := cfg.validateQuotas(); err != nil {
+		return err
+	}
+	if err := cfg.validateEdge(); err != nil {
+		return err
+	}
 	return cfg.validateAddresses()
 }
 

@@ -38,7 +38,9 @@ type Endpoint struct {
 
 type NewRecord struct {
 	ID, WorkspaceID, SecretVersionID uuid.UUID
+	AuditID                          uuid.UUID
 	Status, Scheme, Host, KeyID      string
+	ActorType, ActorID, RequestID    string
 	Port                             int
 	Target, Secret                   cryptobox.Envelope
 	EventTypes                       []string

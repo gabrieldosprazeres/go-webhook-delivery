@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/cryptobox"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -126,15 +128,37 @@ func TestLockedWorkspaceDoesNotBlockIndependentClaim(t *testing.T) {
 }
 
 func TestClaimPlanUsesReadyIndexAtRepresentativeScale(t *testing.T) {
-	superURL := os.Getenv("WDE_TEST_SUPERUSER_DATABASE_URL")
-	if superURL == "" {
-		t.Skip("superuser integration database URL is not configured")
+	superURL, apiURL := os.Getenv("WDE_TEST_SUPERUSER_DATABASE_URL"), os.Getenv("WDE_TEST_API_DATABASE_URL")
+	adminURL, workerURL := os.Getenv("WDE_TEST_ADMIN_DATABASE_URL"), os.Getenv("WDE_TEST_WORKER_DATABASE_URL")
+	if superURL == "" || apiURL == "" || adminURL == "" || workerURL == "" {
+		t.Skip("integration database URLs are not configured")
 	}
-	ctx, api, admin, worker := reliabilityPools(t)
+	ctx := context.Background()
+	control := mustPool(t, ctx, superURL)
+	defer control.Close()
+	databaseName := "wde_claim_plan_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	identifier := pgx.Identifier{databaseName}.Sanitize()
+	if _, err := control.Exec(ctx, "CREATE DATABASE "+identifier+" OWNER wde_owner"); err != nil {
+		t.Fatal(err)
+	}
+	defer dropBoundaryDatabase(t, ctx, control, databaseName, identifier)
+	if _, err := control.Exec(ctx, "REVOKE ALL ON DATABASE "+identifier+
+		" FROM PUBLIC; GRANT CONNECT ON DATABASE "+identifier+" TO wde_migrator,wde_api,wde_worker,wde_admin"); err != nil {
+		t.Fatal(err)
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	isolatedSuperURL := databaseURL(t, superURL, databaseName)
+	runGooseBoundary(t, ctx, root, isolatedSuperURL, "up-to", 10)
+	api := mustPool(t, ctx, databaseURL(t, apiURL, databaseName))
+	admin := mustPool(t, ctx, databaseURL(t, adminURL, databaseName))
+	worker := mustPool(t, ctx, databaseURL(t, workerURL, databaseName))
 	defer api.Close()
 	defer admin.Close()
 	defer worker.Close()
-	super := mustPool(t, ctx, superURL)
+	super := mustPool(t, ctx, isolatedSuperURL)
 	defer super.Close()
 	suspendActiveWorkspaces(t, ctx, admin)
 	materials, _ := cryptobox.Load(config.ProfileTest, config.SecretFiles{})

@@ -12,6 +12,11 @@ import (
 var (
 	ErrNotFound            = errors.New("delivery: not found")
 	ErrInvalidClaimRequest = errors.New("delivery: invalid claim request")
+	ErrInvalidList         = errors.New("delivery: invalid list request")
+	ErrInvalidReplay       = errors.New("delivery: invalid replay request")
+	ErrReplayConflict      = errors.New("delivery: replay idempotency conflict")
+	ErrInvalidTransition   = errors.New("delivery: replay transition is not allowed")
+	ErrPayloadPurged       = errors.New("delivery: payload was purged")
 )
 
 type Claim struct {
@@ -83,8 +88,45 @@ type Details struct {
 	Attempts   []Attempt `json:"attempts"`
 }
 
+type Summary struct {
+	ID         uuid.UUID `json:"id"`
+	EventID    uuid.UUID `json:"event_id"`
+	EndpointID uuid.UUID `json:"endpoint_id"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type ListResult struct {
+	Items      []Summary `json:"items"`
+	NextCursor string    `json:"next_cursor,omitempty"`
+}
+
+type ReplayResult struct {
+	CommandID  uuid.UUID `json:"command_id"`
+	DeliveryID uuid.UUID `json:"delivery_id"`
+	RunNumber  int       `json:"run_number"`
+	Duplicate  bool      `json:"duplicate"`
+}
+
+type ReplayCommand struct {
+	CommandID, AuditID, WorkspaceID, DeliveryID uuid.UUID
+	ActorID, Reason, RequestID                  string
+	KeyHash, Fingerprint                        []byte
+	FingerprintVersion                          int16
+}
+
 type Store interface {
 	ClaimBatch(context.Context, ClaimRequest) ([]Claim, error)
 	Finalize(context.Context, Claim, uuid.UUID, Result) (bool, error)
 	Get(context.Context, uuid.UUID, uuid.UUID) (Details, error)
+}
+
+type ViewStore interface {
+	Get(context.Context, uuid.UUID, uuid.UUID) (Details, error)
+	List(context.Context, uuid.UUID, int, string) (ListResult, error)
+}
+
+type ReplayStore interface {
+	RequestReplay(context.Context, ReplayCommand) (ReplayResult, error)
 }

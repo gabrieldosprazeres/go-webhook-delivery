@@ -15,6 +15,16 @@ const (
 	keyMaterialBytes   = 32
 )
 
+func applySecretPaths(cfg *Config, lookup func(string) (string, bool)) {
+	cfg.Secrets.AuthPepper, _ = envValue(lookup, "WDE_AUTH_PEPPER_FILE")
+	cfg.Secrets.IdempotencyPepper, _ = envValue(lookup, "WDE_IDEMPOTENCY_PEPPER_FILE")
+	cfg.Secrets.FingerprintPepper, _ = envValue(lookup, "WDE_FINGERPRINT_PEPPER_FILE")
+	cfg.Secrets.RateLimitPepper, _ = envValue(lookup, "WDE_RATE_LIMIT_PEPPER_FILE")
+	cfg.Secrets.CursorPepper, _ = envValue(lookup, "WDE_CURSOR_PEPPER_FILE")
+	cfg.Secrets.PayloadKeyring, _ = envValue(lookup, "WDE_PAYLOAD_KEYRING_FILE")
+	cfg.Secrets.SigningKeyring, _ = envValue(lookup, "WDE_SIGNING_KEYRING_FILE")
+}
+
 func validateProductionSecrets(cfg Config) error {
 	if cfg.Service == ServiceAPI {
 		if err := validateAPIPeppers(cfg.Secrets); err != nil {
@@ -50,11 +60,20 @@ func validateAPIPeppers(files SecretFiles) error {
 	if err != nil {
 		return err
 	}
-	if auth == idempotency {
-		return errors.New("config: authentication and idempotency peppers must use distinct key material")
+	rateLimit, err := validatePepperFile("WDE_RATE_LIMIT_PEPPER_FILE", files.RateLimitPepper)
+	if err != nil {
+		return err
 	}
-	if fingerprint == auth || fingerprint == idempotency {
-		return errors.New("config: authentication, idempotency and fingerprint peppers must use distinct key material")
+	cursor, err := validatePepperFile("WDE_CURSOR_PEPPER_FILE", files.CursorPepper)
+	if err != nil {
+		return err
+	}
+	seen := make(map[[keyMaterialBytes]byte]struct{}, 5)
+	for _, material := range [][keyMaterialBytes]byte{auth, idempotency, fingerprint, rateLimit, cursor} {
+		if _, reused := seen[material]; reused {
+			return errors.New("config: authentication, idempotency, fingerprint, rate-limit and cursor peppers must use distinct key material")
+		}
+		seen[material] = struct{}{}
 	}
 	return nil
 }

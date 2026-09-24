@@ -1,7 +1,7 @@
 # Status: Webhook Delivery Engine
 
 **Atualizado em:** 2026-09-24
-**Branch:** `feature/sprint-2-reliability-concurrency`
+**Branch:** `feature/sprint-3-tenancy-replay-ops`
 
 ## Planejamento
 
@@ -166,4 +166,59 @@ O corte vertical foi validado em PostgreSQL 17 com migration `up/down/up`, roles
 
 ## Próximo gate
 
-Registrar a revalidação independente do Code Review da Sprint 2. Com zero blockers/warnings, integrar a branch e iniciar o planejamento da Sprint 3.
+Sprint 2 integrada a `main` nos commits `ca1b7f1` e `a6afea3`.
+
+## Sprint 3 — Tenancy, replay e operação
+
+- ✅ S3-01 — RLS e funções privilegiadas completas — implementada
+- ✅ S3-02 — Quotas e limites persistentes — implementada
+- ✅ S3-03 — Replay por geração — implementada
+- ✅ S3-04 — Auditoria append-only — implementada
+- ❌ Code Review — rodada 1 reprovada com 2 blockers e 2 warnings
+- ✅ Correções da rodada 1 — implementadas e validadas pelo Stack Agent
+- ✅ Re-review — rodada 2 aprovada, com zero blockers e zero warnings
+- ✅ QA — aprovado, 147/147 testes e subtestes na regressão integral, stress S3 160/160 e zero skip
+
+### Evidências do Stack Agent
+
+- Migrations físicas `000007`–`000010` mantêm o schema lógico v3 e funções sem grants runtime até a publicação atômica de v4; o caminho `down` restaura v3 antes de remover staging.
+- `audit_events`, `replay_commands` e `rate_limit_buckets` usam `ENABLE/FORCE RLS`, policies explícitas para executores `NOLOGIN` e nenhum DML direto de auditoria para API, worker ou admin.
+- Funções privilegiadas possuem owner executor mínimo — incluindo roles NOLOGIN dedicadas `wde_quota_executor` e `wde_replay_executor` —, `SECURITY DEFINER`, `search_path=pg_catalog`, argumentos limitados, nomes totalmente qualificados, zero SQL dinâmico e `PUBLIC EXECUTE` revogado.
+- O helper `tenanttx.Within` aplica `set_config(..., true)` na mesma conexão/transação e efetua rollback antes de devolver a conexão ao pool inclusive em cancelamento e panic.
+- Teste com pool de uma conexão comprovou zero vazamento de workspace após commit, rollback e panic, além de isolamento cross-tenant.
+- Quotas configuráveis consomem dimensões global/workspace/API key e delivery em uma transação; usam `transaction_timestamp()` estável, buckets expirados, HMAC com pepper exclusivo e nenhuma label de alta cardinalidade.
+- Integração comprovou limite persistente após recriar o limiter, rollback atômico das dimensões, expiração de janela, fan-out máximo 100 sem persistência parcial e paginação 50/100 por cursor opaco.
+- Replay exige escopo, motivo e chave de idempotência; advisory lock tenant-scoped serializa a mesma chave antes do recheck. Duas solicitações idênticas concorrentes geraram um comando/run/audit; conteúdo divergente retornou conflito de domínio sem `500`.
+- O contrato HTTP real confirmou `deliveries:retry`, ausência de enumeração cross-tenant, `202` idempotente para repetição idêntica e `409` para a mesma chave com conteúdo diferente.
+- Novo run preserva `attempt_sequence` monotônico e attempts anteriores: a integração observou `(run 1, attempt 1, sequence 1)` seguido de `(run 2, attempt 1, sequence 2)`.
+- Payload expurgado recusou replay sem comando, auditoria ou transição parcial. Ações aceitas confirmam comando, transição e auditoria juntas.
+- Bootstrap/revogação, criação de endpoint e replay registram snapshots append-only sem token, segredo, payload, URL completa, headers ou corpos; snapshots não possuem FK para entidades expurgáveis.
+- O contrato OpenAPI inclui listagem paginada, replay idempotente, erros 409/429 e `Retry-After`; README, `.env.example`, Compose, Makefile e CI foram alinhados ao schema lógico v4.
+- Após as correções, `make check` passou com testes unitários, race detector, `vet`, Staticcheck, `govulncheck`, lint OpenAPI, validação Goose e build dos três binários. `make integration` passou no PostgreSQL 17 com bootstrap, 15 cenários de regressão S1/S2, 8 cenários S3, pipeline real de produção e shutdown por sinal.
+
+### Correções após Code Review — rodada 1
+
+- O HMAC de quota v2 inclui tipo, operação, janela, workspace, API key e recurso aplicáveis; o `ON CONFLICT` também exige igualdade dos metadados. Teste pelo `newPublicServer` comprovou buckets distintos para atacante e vítima usando o mesmo UUID de delivery e ausência de quota poisoning.
+- O pipeline real agora é `edge bounded/semaphore → authenticate → quota PostgreSQL → authorize scope → handler`. Token inválido foi limitado antes de novo lookup (`401 → 429`) e uma chave sem escopo consumiu quota autenticada antes do `403` (`403 → 429`). `X-Forwarded-For` não altera a origem observada.
+- O edge limiter usa HMAC, fixed window, semáforo não bloqueante e LRU com cardinalidade máxima para dimensões global/origem/prefixo; teste de overflow concorrente confirma rejeição imediata.
+- Cursores são binários v1, tenant-bound e HMAC-authenticated com pepper próprio. Cursor de outro workspace e cursor adulterado retornaram `400 invalid_page` na rota de produção.
+- `WDE_CURSOR_PEPPER_FILE` é obrigatório na API produtiva e validado como distinto de auth, idempotency, fingerprint e rate limit.
+- Respostas `409` e `429` documentam `application/problem+json`; o contrato é carregado, tem referências resolvidas e é validado semanticamente por `kin-openapi v0.149.0` pinado no módulo e no CI.
+- Contenção concorrente do bucket global permitiu exatamente 8 de 32 solicitações em cinco execuções consecutivas. Replays concorrentes passaram 20 execuções e o pipeline produtivo completo passou 10 execuções consecutivas.
+
+### QA da Sprint 3
+
+**Veredicto:** ✅ Aprovado em 2026-09-24.
+
+- `make check` passou com testes, race detector, `vet`, Staticcheck, `govulncheck`, validação OpenAPI/Goose e build dos três binários.
+- A regressão integral sem cache em PostgreSQL 17.11 executou 147/147 testes e subtestes, em 18 pacotes testados, com zero skip e zero falha.
+- `make integration` passou com bootstrap, 15 regressões S1/S2, oito cenários S3, pipeline HTTP real e shutdown por sinal.
+- Os oito cenários S3 passaram em 160/160 execuções no mesmo processo; o pipeline público passou 20/20 execuções e 80/80 subcenários.
+- Migrations foram verificadas do zero, em cinco ciclos de boundaries `up/down/up` e com schema lógico v4 publicado somente no boundary físico 10.
+- Consultas independentes confirmaram owners executores mínimos, `SECURITY DEFINER`, `search_path=pg_catalog`, ausência de `PUBLIC EXECUTE`, RLS forçada e auditoria append-only sem canários.
+- O QA corrigiu somente isolamento de fixtures: fechamento de pools não usados, database próprio para o plano de claim e suspensão de workspaces anteriores no E2E legado. Nenhum código de produção foi alterado.
+- Relatório completo: `docs/webhook-delivery-engine-qa-sprint-3.md`.
+
+## Próximo gate
+
+Sprint 3 apta para commit e integração em `main`; em seguida, iniciar a Sprint 4 — Segurança de saída e dados.
