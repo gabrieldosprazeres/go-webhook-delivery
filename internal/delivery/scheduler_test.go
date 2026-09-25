@@ -135,6 +135,74 @@ func (*panicClaimStore) ClaimBatch(context.Context, ClaimRequest) ([]Claim, erro
 	panic("hostile claim")
 }
 
+type recoveringSchedulerStore struct {
+	schedulerStore
+	mu             sync.Mutex
+	claimFailures  int
+	finalizeErrors int
+	claimCalls     int
+	finalizeCalls  int
+	completed      chan struct{}
+}
+
+func (s *recoveringSchedulerStore) ClaimBatch(ctx context.Context, request ClaimRequest) ([]Claim, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.claimCalls++
+	if s.claimCalls <= s.claimFailures {
+		return nil, errors.New("transient claim failure")
+	}
+	if s.finalizeCalls <= s.finalizeErrors {
+		return []Claim{{DeliveryID: uuid.New(), AttemptNumber: 1, MaxAttempts: 10}}, nil
+	}
+	return nil, nil
+}
+
+func (s *recoveringSchedulerStore) Finalize(context.Context, Claim, uuid.UUID, Result) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finalizeCalls++
+	if s.finalizeCalls <= s.finalizeErrors {
+		return false, errors.New("transient finalize failure")
+	}
+	if s.completed != nil {
+		select {
+		case <-s.completed:
+		default:
+			close(s.completed)
+		}
+	}
+	return true, nil
+}
+
+func TestSchedulerRecoversFromTransientStoreFailures(t *testing.T) {
+	store := &recoveringSchedulerStore{
+		claimFailures: 2, finalizeErrors: 1, completed: make(chan struct{}),
+	}
+	runner := testScheduler(store, RunnerOptions{
+		Concurrency: 1, BatchSize: 1, Poll: time.Millisecond,
+		PollJitter: func(time.Duration) time.Duration { return 0 },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	select {
+	case <-store.completed:
+		cancel()
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("scheduler did not recover from transient store failures")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.claimCalls < 4 || store.finalizeCalls != 2 {
+		t.Fatalf("claim calls=%d finalize calls=%d", store.claimCalls, store.finalizeCalls)
+	}
+}
+
 func TestSchedulerCancellationEscapesBlockedClaim(t *testing.T) {
 	store := &schedulerStore{blockClaim: true, started: make(chan struct{}, 1)}
 	runner := testScheduler(store, RunnerOptions{Poll: 10 * time.Millisecond, Shutdown: 100 * time.Millisecond})
