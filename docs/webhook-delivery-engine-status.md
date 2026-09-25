@@ -1,7 +1,7 @@
 # Status: Webhook Delivery Engine
 
 **Atualizado em:** 2026-09-25
-**Branch:** `feature/easypanel-production-demo`
+**Branch:** `main`
 
 ## Planejamento
 
@@ -429,7 +429,19 @@ remoto permanece uma ação separada, pois este checkout não possui remote conf
 - ✅ PostgreSQL isolado sem TCP, com socket Unix, SCRAM e secrets `0400`.
 - ✅ Gerador de segredos e smoke de CI da topologia completa.
 - ✅ Gates completos, revisão de segurança, commits incrementais e pull request público.
-- ⏳ Merge, release `v1.1.0` e deploy na VPS pessoal via EasyPanel.
+- ✅ Pull request integrado a `main`, tag `v1.1.0` publicada e deploy concluído na
+  VPS pessoal pelo EasyPanel.
+- ✅ CI de `main` aprovada em oito jobs, incluindo testes, race detector,
+  `govulncheck`, Gitleaks, Compose adversarial, SBOM/Trivy e smoke da topologia
+  produtiva do EasyPanel.
+- ✅ DNS e TLS válidos para a
+  [vitrine](https://webhooks.gabrieldosprazeres.com.br),
+  [documentação](https://docs.webhooks.gabrieldosprazeres.com.br) e
+  [API](https://api.webhooks.gabrieldosprazeres.com.br).
+- ✅ Runtime verificado: API e worker `v1.1.0` iniciados em produção, retenção sem
+  degradação, PostgreSQL privado e migrations Goose aplicadas até a versão 20.
+- ✅ Probes operacionais permanecem privadas (`404` externamente), rotas `/v1/*`
+  exigem autenticação e as três superfícies públicas apresentam TLS válido.
 
 O escopo é uma demonstração de portfólio com dados sintéticos, não uma oferta
 SaaS. A decisão de host único está em `ADR-011` e o procedimento em
