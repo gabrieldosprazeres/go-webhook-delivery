@@ -5,7 +5,7 @@ GO ?= go
 .PHONY: help fmt fmt-check tidy-check test integration adversarial race vet staticcheck vuln secret-scan \
 	openapi-lint build check migration-validate migrate-up migrate-status compose-config compose-up \
 	compose-demo compose-down quickstart benchmark soak images supply-chain container-smoke rollback-rehearsal \
-	easypanel-config easypanel-smoke
+	easypanel-config easypanel-smoke browser-smoke
 
 help: ## Lista os comandos disponiveis.
 	@awk 'BEGIN {FS = ":.*##"; printf "Uso: make <alvo>\n\n"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -80,6 +80,10 @@ easypanel-config: ## Valida a topologia de producao; exige secrets e URLs public
 
 easypanel-smoke: ## Sobe e valida a topologia produtiva em ambiente descartavel.
 	./scripts/easypanel-smoke.sh
+
+browser-smoke: ## Valida o console em Chromium desktop/mobile; exige credencial sintética 0600.
+	@test -n "$$WDE_BROWSER_CREDENTIAL_FILE" -a -f "$$WDE_BROWSER_CREDENTIAL_FILE"
+	npm --prefix test/browser test
 
 compose-up: ## Sobe PostgreSQL, migration explicita, API, worker e console.
 	docker compose --profile core up --build

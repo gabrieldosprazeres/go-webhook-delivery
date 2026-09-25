@@ -130,7 +130,11 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		// Chromium serializes the Origin of same-origin form navigations as "null"
+		// under no-referrer, which would make the strict Origin CSRF check reject a
+		// legitimate login. same-origin keeps cross-site referrers suppressed while
+		// preserving the origin on the console's own mutations.
+		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		if s.deps.SecureCookies {

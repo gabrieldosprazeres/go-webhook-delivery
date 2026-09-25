@@ -113,6 +113,16 @@ jobs:
         with:
           go-version: 1.27.1
           cache: true
+      - name: Set up Node for browser smoke
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 26.3.0
+          cache: npm
+          cache-dependency-path: test/browser/package-lock.json
+      - name: Install pinned browser test dependencies
+        run: |
+          npm ci --prefix test/browser
+          npm exec --prefix test/browser playwright install --with-deps chromium
       - name: Validate Compose
         run: docker compose --profile demo config --quiet
       - name: Build every image target
@@ -154,6 +164,30 @@ jobs:
           curl --fail http://127.0.0.1:9091/metrics | grep -q '^wde_active_workers'
           curl --fail http://127.0.0.1:9092/metrics | grep -q '^wde_http_requests_total'
           test "$(docker inspect --format='{{.State.Status}}' webhook-delivery-engine-worker-1)" = "running"
+      - name: Browser smoke on desktop and mobile
+        run: |
+          credential_dir="$(mktemp -d)"
+          bootstrap_container="wde-browser-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm --force "$bootstrap_container" >/dev/null 2>&1 || true
+            rm -rf "$credential_dir"
+          }
+          trap cleanup EXIT INT TERM
+          docker compose --profile core run --name "$bootstrap_container" --no-deps \
+            -e WDE_DATABASE_URL="postgres://wde_admin:${WDE_ADMIN_DATABASE_PASSWORD:-admin-local-only}@postgres:5432/wde?sslmode=disable" api \
+            credentials bootstrap --name "Browser smoke" --output-file=/tmp/credential.json
+          docker cp "$bootstrap_container:/tmp/credential.json" "$credential_dir/credential.json"
+          chmod 0600 "$credential_dir/credential.json"
+          WDE_BROWSER_BASE_URL=http://127.0.0.1:8082 \
+            WDE_BROWSER_CREDENTIAL_FILE="$credential_dir/credential.json" \
+            make browser-smoke
+      - name: Upload browser smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-smoke-evidence
+          path: test/browser/artifacts
+          if-no-files-found: error
       - name: Verify dynamic readiness during database loss
         run: |
           docker compose --profile core stop postgres

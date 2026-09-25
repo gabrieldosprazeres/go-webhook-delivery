@@ -12,7 +12,8 @@ Internet
    +-- HTTPS --> swagger:8080   (OpenAPI navegável)
    +-- HTTPS --> api:8080       (API autenticada)
    +-- HTTPS --> console:8082   (painel autenticado)
-   +-- HTTPS --> grafana:3000   (somente operador)
+
+operador -- túnel SSH --> 127.0.0.1:33000 --> grafana:3000
 
 worker ------------------------------> destinos HTTPS públicos
   |                 volume de socket Unix

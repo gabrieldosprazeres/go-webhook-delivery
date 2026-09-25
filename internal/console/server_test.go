@@ -82,7 +82,8 @@ func TestLoginPageSetsStrictBrowserProtections(t *testing.T) {
 		t.Fatalf("unexpected CSP: %q", csp)
 	}
 	if response.Header().Get("Strict-Transport-Security") == "" ||
-		response.Header().Get("Cache-Control") != "no-store, private" {
+		response.Header().Get("Cache-Control") != "no-store, private" ||
+		response.Header().Get("Referrer-Policy") != "same-origin" {
 		t.Fatal("production browser security headers are incomplete")
 	}
 	cookies := response.Result().Cookies()
