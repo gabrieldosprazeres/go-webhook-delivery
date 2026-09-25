@@ -40,6 +40,9 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 	if err := applyTelemetryEnvironment(cfg, lookup); err != nil {
 		return err
 	}
+	if err := applyConsoleEnvironment(cfg, lookup); err != nil {
+		return err
+	}
 	if cfg.Service == ServiceWorker {
 		if err := applyWorkerEnvironment(cfg, lookup); err != nil {
 			return err
@@ -194,12 +197,18 @@ func httpAddrVariable(service Service) string {
 	if service == ServiceChaosLab {
 		return "WDE_CHAOSLAB_HTTP_ADDR"
 	}
+	if service == ServiceConsole {
+		return "WDE_CONSOLE_HTTP_ADDR"
+	}
 	return "WDE_API_HTTP_ADDR"
 }
 
 func operationalAddrVariable(service Service) string {
 	if service == ServiceWorker {
 		return "WDE_WORKER_OPERATIONAL_ADDR"
+	}
+	if service == ServiceConsole {
+		return "WDE_CONSOLE_OPERATIONAL_ADDR"
 	}
 	return "WDE_API_OPERATIONAL_ADDR"
 }

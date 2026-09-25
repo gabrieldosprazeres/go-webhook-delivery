@@ -47,6 +47,60 @@ func TestQueueMetricsDowngradeGuardIsAtomicAndSerialized(t *testing.T) {
 	t.Run("concurrent_global_audit", testConcurrentRollbackWriter)
 }
 
+func TestConsoleDowngradeGuardIsAtomicAndSerialized(t *testing.T) {
+	ctx, db, root, databaseURL := newRollbackBoundaryAt(t, 21)
+	workspaceID, keyID := uuid.New(), uuid.New()
+	if _, err := db.Exec(ctx, `INSERT INTO wde.workspaces(id,name)
+		VALUES($1,'console-rollback-guard')`, workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO wde.api_keys(id,workspace_id,prefix,verifier)
+		VALUES($1,$2,'console123456789',$3)`, keyID, workspaceID, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, `INSERT INTO wde.console_sessions(
+		id,workspace_id,api_key_id,token_prefix,token_verifier,idle_expires_at,
+		absolute_expires_at,restore_generation)
+		VALUES($1,$2,$3,'0123456789abcdef',$4,clock_timestamp()+interval '15 minutes',
+		clock_timestamp()+interval '60 minutes',0)`, uuid.New(), workspaceID, keyID, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, runErr := runGooseResult(ctx, root, databaseURL, "down-to", 20)
+		result <- runErr
+	}()
+	select {
+	case err = <-result:
+		t.Fatalf("downgrade did not wait for active console writer: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-result; err == nil {
+		t.Fatal("downgrade missed concurrently committed console session")
+	}
+
+	var schemaVersion, migrationVersion, sessions int
+	if err = db.QueryRow(ctx, `SELECT wde.schema_version(),
+		(SELECT max(version_id) FROM goose_db_version WHERE is_applied),
+		(SELECT count(*) FROM wde.console_sessions)`).
+		Scan(&schemaVersion, &migrationVersion, &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if schemaVersion != 6 || migrationVersion != 21 || sessions != 1 {
+		t.Fatalf("schema=%d migration=%d sessions=%d", schemaVersion, migrationVersion, sessions)
+	}
+}
+
 func testConcurrentRollbackWriter(t *testing.T) {
 	ctx, db, root, databaseURL := newRollbackBoundary(t)
 	tx, err := db.Begin(ctx)
@@ -76,6 +130,10 @@ func testConcurrentRollbackWriter(t *testing.T) {
 }
 
 func newRollbackBoundary(t *testing.T) (context.Context, *pgxpool.Pool, string, string) {
+	return newRollbackBoundaryAt(t, 20)
+}
+
+func newRollbackBoundaryAt(t *testing.T, version int) (context.Context, *pgxpool.Pool, string, string) {
 	t.Helper()
 	superURL := os.Getenv("WDE_TEST_SUPERUSER_DATABASE_URL")
 	if superURL == "" {
@@ -98,7 +156,7 @@ func newRollbackBoundary(t *testing.T) (context.Context, *pgxpool.Pool, string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	runGooseBoundary(t, ctx, root, boundaryURL, "up-to", 20)
+	runGooseBoundary(t, ctx, root, boundaryURL, "up-to", version)
 	db := mustPool(t, ctx, boundaryURL)
 	t.Cleanup(db.Close)
 	return ctx, db, root, boundaryURL

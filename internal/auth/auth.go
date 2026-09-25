@@ -20,6 +20,8 @@ import (
 
 const dummyToken = "wde_test_0000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
+var ErrUnauthorized = errors.New("auth: unauthorized")
+
 type Principal struct {
 	APIKeyID    uuid.UUID
 	WorkspaceID uuid.UUID
@@ -60,29 +62,43 @@ func (a *Authenticator) Middleware(scope string, next http.Handler) http.Handler
 // authorizing a route scope. Quotas can therefore run between both decisions.
 func (a *Authenticator) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, prefix, ok := bearer(r.Header.Get("Authorization"))
+		token, _, ok := bearer(r.Header.Get("Authorization"))
 		if !ok {
 			problem.Write(w, r, http.StatusUnauthorized, "unauthorized", "Authentication required")
 			return
 		}
-		record, found, err := a.lookup.LookupKey(r.Context(), prefix)
-		candidate := Verifier(a.pepper, token)
-		expected := a.dummy[:]
-		if found {
-			expected = record.Verifier
-		}
-		valid := len(expected) == sha256.Size && subtle.ConstantTimeCompare(candidate[:], expected) == 1
-		if err != nil || !found || !valid || record.Status != "active" || record.WorkspaceStatus != "active" || (record.ExpiresAt != nil && !record.ExpiresAt.After(time.Now())) {
+		principal, err := a.AuthenticateToken(r.Context(), token)
+		if err != nil {
 			problem.Write(w, r, http.StatusUnauthorized, "unauthorized", "Authentication required")
 			return
 		}
-		scopes := make(map[string]struct{}, len(record.Scopes))
-		for _, item := range record.Scopes {
-			scopes[item] = struct{}{}
-		}
-		principal := Principal{APIKeyID: record.APIKeyID, WorkspaceID: record.WorkspaceID, Scopes: scopes}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, principal)))
 	})
+}
+
+// AuthenticateToken exchanges a raw API key for the key's current principal.
+// Callers must discard the token immediately and never persist or log it.
+func (a *Authenticator) AuthenticateToken(ctx context.Context, token string) (Principal, error) {
+	prefix, ok := tokenPrefix(token)
+	if !ok {
+		return Principal{}, ErrUnauthorized
+	}
+	record, found, err := a.lookup.LookupKey(ctx, prefix)
+	candidate := Verifier(a.pepper, token)
+	expected := a.dummy[:]
+	if found {
+		expected = record.Verifier
+	}
+	valid := len(expected) == sha256.Size && subtle.ConstantTimeCompare(candidate[:], expected) == 1
+	if err != nil || !found || !valid || record.Status != "active" || record.WorkspaceStatus != "active" ||
+		(record.ExpiresAt != nil && !record.ExpiresAt.After(time.Now())) {
+		return Principal{}, ErrUnauthorized
+	}
+	scopes := make(map[string]struct{}, len(record.Scopes))
+	for _, item := range record.Scopes {
+		scopes[item] = struct{}{}
+	}
+	return Principal{APIKeyID: record.APIKeyID, WorkspaceID: record.WorkspaceID, Scopes: scopes}, nil
 }
 
 // Authorize checks a scope only after authentication and authenticated quotas.
@@ -111,20 +127,28 @@ func bearer(header string) (string, string, bool) {
 		return "", "", false
 	}
 	token := strings.TrimPrefix(header, "Bearer ")
+	prefix, ok := tokenPrefix(token)
+	return token, prefix, ok
+}
+
+func tokenPrefix(token string) (string, bool) {
+	if len(token) > 249 {
+		return "", false
+	}
 	parts := strings.SplitN(token, "_", 4)
 	if len(parts) != 4 || parts[0] != "wde" || (parts[1] != "test" && parts[1] != "live") || len(parts[2]) != 16 {
-		return "", "", false
+		return "", false
 	}
 	if _, err := hex.DecodeString(parts[2]); err != nil {
-		return "", "", false
+		return "", false
 	}
 	secret, err := base64.RawURLEncoding.Strict().DecodeString(parts[3])
 	if err != nil || len(secret) != 32 {
 		clear(secret)
-		return "", "", false
+		return "", false
 	}
 	clear(secret)
-	return token, parts[2], true
+	return parts[2], true
 }
 
 // PresentedPrefix returns a syntactically valid, unauthenticated token prefix.
@@ -133,6 +157,11 @@ func PresentedPrefix(header string) (string, bool) {
 	_, prefix, ok := bearer(header)
 	return prefix, ok
 }
+
+// PresentedTokenPrefix extracts only the public syntactic prefix from a raw
+// API-key candidate. It never authenticates the token and must only be used
+// for best-effort local throttling.
+func PresentedTokenPrefix(token string) (string, bool) { return tokenPrefix(strings.TrimSpace(token)) }
 
 func Generate(test bool, pepper [32]byte) (token string, prefix string, verifier [32]byte, err error) {
 	var prefixRaw [8]byte

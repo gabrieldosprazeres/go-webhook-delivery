@@ -100,3 +100,35 @@ func (s *PostgresStore) Get(ctx context.Context, workspaceID, id uuid.UUID) (Sto
 	}
 	return record, nil
 }
+
+func (s *PostgresStore) ListEndpoints(ctx context.Context, workspaceID uuid.UUID, limit int, cursor listCursor) ([]ListRecord, error) {
+	records := make([]ListRecord, 0, limit)
+	err := tenanttx.Within(ctx, s.pool, workspaceID, func(tx pgx.Tx) error {
+		var cursorTime, cursorID any
+		if !cursor.CreatedAt.IsZero() {
+			cursorTime, cursorID = cursor.CreatedAt, cursor.ID
+		}
+		rows, err := tx.Query(ctx, `SELECT e.id,e.workspace_id,e.status,e.scheme,e.host_ascii,e.port,
+			e.target_cipher_format_version,e.target_ciphertext,e.target_nonce,e.target_kek_version,e.created_at,
+			ARRAY(SELECT s.event_type FROM wde.endpoint_subscriptions s
+			 WHERE s.workspace_id=e.workspace_id AND s.endpoint_id=e.id ORDER BY s.event_type)
+			FROM wde.endpoints e WHERE e.workspace_id=$1
+			AND ($2::timestamptz IS NULL OR (e.created_at,e.id)<($2,$3::uuid))
+			ORDER BY e.created_at DESC,e.id DESC LIMIT $4`, workspaceID, cursorTime, cursorID, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var record ListRecord
+			if err := rows.Scan(&record.ID, &record.WorkspaceID, &record.Status, &record.Scheme, &record.Host,
+				&record.Port, &record.Target.FormatVersion, &record.Target.Ciphertext, &record.Target.Nonce,
+				&record.Target.KEKVersion, &record.CreatedAt, &record.EventTypes); err != nil {
+				return err
+			}
+			records = append(records, record)
+		}
+		return rows.Err()
+	})
+	return records, err
+}

@@ -113,10 +113,20 @@ jobs:
         with:
           go-version: 1.27.1
           cache: true
+      - name: Set up Node for browser smoke
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 26.3.0
+          cache: npm
+          cache-dependency-path: test/browser/package-lock.json
+      - name: Install pinned browser test dependencies
+        run: |
+          npm ci --prefix test/browser
+          npm exec --prefix test/browser -- playwright install --with-deps chromium
       - name: Validate Compose
         run: docker compose --profile demo config --quiet
       - name: Build every image target
-        run: docker compose --profile demo build migrate api worker chaoslab
+        run: docker compose --profile demo build migrate api worker console chaoslab
       - name: Start PostgreSQL and run explicit migration job
         env:
           WDE_POSTGRES_PORT: "55432"
@@ -128,33 +138,74 @@ jobs:
           WDE_TEST_API_DATABASE_URL: postgres://wde_api:api-local-only@127.0.0.1:55432/wde?sslmode=disable
           WDE_TEST_WORKER_DATABASE_URL: postgres://wde_worker:worker-local-only@127.0.0.1:55432/wde?sslmode=disable
           WDE_TEST_ADMIN_DATABASE_URL: postgres://wde_admin:admin-local-only@127.0.0.1:55432/wde?sslmode=disable
+          WDE_TEST_CONSOLE_DATABASE_URL: postgres://wde_console:console-local-only@127.0.0.1:55432/wde?sslmode=disable
           WDE_TEST_SUPERUSER_DATABASE_URL: postgres://postgres:postgres-local-only@127.0.0.1:55432/wde?sslmode=disable
         run: make adversarial
       - name: Rehearse guarded rollback and forward recovery
         run: make rollback-rehearsal
+      - name: Reset disposable runtime data after adversarial checks
+        env:
+          WDE_POSTGRES_PORT: "55432"
+        run: |
+          docker compose --profile demo down --volumes --remove-orphans
+          docker compose --profile core up --detach --wait postgres
+          docker compose --profile core run --rm migrate
       - name: Start runtime services
-        run: docker compose --profile core up --detach --no-deps api worker
+        run: docker compose --profile core up --detach --no-deps api worker console
       - name: Verify migration, roles and readiness
         run: |
-          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT wde.schema_version()")" = "5"
+          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT wde.schema_version()")" = "6"
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_api','wde.schema_metadata','SELECT')")" = "f"
           test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_worker','wde.schema_metadata','SELECT')")" = "f"
+          test "$(docker compose exec -T postgres psql -U postgres -d wde -Atc "SELECT has_table_privilege('wde_console','wde.console_sessions','SELECT')")" = "f"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/livez)" = "404"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/readyz)" = "404"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8082/metrics)" = "404"
+          curl --fail http://127.0.0.1:8082/login | grep -q 'Conectar workspace'
           curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9090/livez
           curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9090/readyz
           curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9091/livez
           curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9091/readyz
+          curl --fail --retry 10 --retry-delay 1 http://127.0.0.1:9092/readyz
           curl --fail http://127.0.0.1:9090/metrics | grep -q '^wde_http_requests_total'
           curl --fail http://127.0.0.1:9091/metrics | grep -q '^wde_active_workers'
+          curl --fail http://127.0.0.1:9092/metrics | grep -q '^wde_http_requests_total'
           test "$(docker inspect --format='{{.State.Status}}' webhook-delivery-engine-worker-1)" = "running"
+      - name: Browser smoke on desktop and mobile
+        run: |
+          credential_dir="$(mktemp -d)"
+          bootstrap_container="wde-browser-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm --force "$bootstrap_container" >/dev/null 2>&1 || true
+            find "$credential_dir" -depth -delete
+          }
+          trap cleanup EXIT INT TERM
+          sudo chown 65532:65532 "$credential_dir"
+          docker compose --profile core run --rm --name "$bootstrap_container" --no-deps \
+            --volume "$credential_dir:/credential" \
+            -e WDE_ADMIN_DATABASE_URL="postgres://wde_admin:${WDE_ADMIN_DATABASE_PASSWORD:-admin-local-only}@postgres:5432/wde?sslmode=disable" api \
+            credentials bootstrap --name "Browser smoke" --output-file=/credential/credential.json
+          sudo chown "$(id -u):$(id -g)" "$credential_dir" "$credential_dir/credential.json"
+          chmod 0700 "$credential_dir"
+          chmod 0600 "$credential_dir/credential.json"
+          WDE_BROWSER_BASE_URL=http://127.0.0.1:8082 \
+            WDE_BROWSER_CREDENTIAL_FILE="$credential_dir/credential.json" \
+            make browser-smoke
+      - name: Upload browser smoke evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-smoke-evidence
+          path: test/browser/artifacts
+          if-no-files-found: error
       - name: Verify dynamic readiness during database loss
         run: |
           docker compose --profile core stop postgres
           curl --fail http://127.0.0.1:9090/livez
           curl --fail http://127.0.0.1:9091/livez
+          curl --fail http://127.0.0.1:9092/livez
           ! curl --fail --max-time 10 http://127.0.0.1:9090/readyz
           ! curl --fail --max-time 10 http://127.0.0.1:9091/readyz
+          ! curl --fail --max-time 10 http://127.0.0.1:9092/readyz
       - name: Verify all runtime and migrator images fail closed
         run: make container-smoke
       - name: Generate SBOMs and scan exact images
@@ -190,7 +241,12 @@ jobs:
           mkdir -m 700 "$WDE_SUPPLY_CHAIN_OUTPUT"
           ./scripts/supply-chain.sh "$WDE_SUPPLY_CHAIN_OUTPUT" \
             webhook-delivery-engine-showcase:easypanel \
-            webhook-delivery-engine-swagger:easypanel
+            webhook-delivery-engine-console:easypanel \
+            webhook-delivery-engine-swagger:easypanel \
+            otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1 \
+            prom/prometheus:v3.15.0-distroless@sha256:b2a413d5a03ea6a76782a508d1c7947440bba3b973931a25676e278431891b01 \
+            grafana/tempo:3.1.0-rc.1@sha256:17ba563fb5830035faf0d99368021a53039ee50628bf1b93f17c70ba94d65ada \
+            grafana/grafana:13.1.6@sha256:d8276d620291d3aaae3e31dde6d63e6807afee49825f04e8aa7392bbe024216f
       - name: Upload presentation supply-chain evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -22,6 +22,9 @@ func (s *PostgresStore) Purge(ctx context.Context, batch int) (Counts, error) {
 	if err := s.pool.QueryRow(ctx, `SELECT wde.purge_retired_secrets($1)`, batch).Scan(&result.Secrets); err != nil {
 		return Counts{}, err
 	}
+	if err := s.pool.QueryRow(ctx, `SELECT wde.purge_console_sessions($1)`, batch).Scan(&result.Sessions); err != nil {
+		return Counts{}, err
+	}
 	if err := s.pool.QueryRow(ctx, `SELECT * FROM wde.purge_expired_metadata($1)`, batch).Scan(
 		&result.Attempts, &result.Replays, &result.Rotations, &result.Deliveries,
 		&result.Events, &result.Audits, &result.Buckets); err != nil {

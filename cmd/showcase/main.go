@@ -19,6 +19,7 @@ const defaultAddress = ":8080"
 type pageData struct {
 	APIURL      string
 	DocsURL     string
+	ConsoleURL  string
 	GitHubURL   string
 	ReleaseURL  string
 	LinkedInURL string
@@ -64,6 +65,7 @@ func loadPageData() pageData {
 	return pageData{
 		APIURL:      environment("WDE_SHOWCASE_API_URL", "https://api.example.com"),
 		DocsURL:     environment("WDE_SHOWCASE_DOCS_URL", "https://docs.example.com"),
+		ConsoleURL:  environment("WDE_SHOWCASE_CONSOLE_URL", "https://console.example.com"),
 		GitHubURL:   environment("WDE_SHOWCASE_GITHUB_URL", "https://github.com/gabrieldosprazeres/go-webhook-delivery"),
 		ReleaseURL:  environment("WDE_SHOWCASE_RELEASE_URL", "https://github.com/gabrieldosprazeres/go-webhook-delivery/releases"),
 		LinkedInURL: environment("WDE_SHOWCASE_LINKEDIN_URL", "https://www.linkedin.com/in/gabrieldosprazeres"),
@@ -143,7 +145,7 @@ const pageTemplate = `<!doctype html>
   <header class="wrap nav"><div class="brand">webhook<span>.</span>engine</div><nav class="navlinks"><a href="#arquitetura">Arquitetura</a><a href="#engenharia">Engenharia</a><a class="button" href="{{.GitHubURL}}" target="_blank" rel="noopener noreferrer">Ver código ↗</a></nav></header>
   <main>
     <section class="wrap hero">
-      <div><div class="eyebrow">Case técnico · Go + PostgreSQL</div><h1>Webhooks que chegam. Mesmo quando tudo falha.</h1><p>Uma engine de entrega durável com semântica <em>at-least-once</em>, retentativas inteligentes, isolamento multi-tenant e segurança aplicada desde a arquitetura.</p><div class="actions"><a class="button primary" href="{{.DocsURL}}" target="_blank" rel="noopener noreferrer">Explorar API no Swagger</a><a class="button" href="{{.GitHubURL}}" target="_blank" rel="noopener noreferrer">GitHub</a><a class="button" href="{{.ReleaseURL}}" target="_blank" rel="noopener noreferrer">Release</a></div></div>
+		<div><div class="eyebrow">Case técnico · Go + PostgreSQL</div><h1>Webhooks que chegam. Mesmo quando tudo falha.</h1><p>Uma engine de entrega durável com semântica <em>at-least-once</em>, retentativas inteligentes, isolamento multi-tenant e segurança aplicada desde a arquitetura.</p><div class="actions"><a class="button primary" href="{{.ConsoleURL}}" target="_blank" rel="noopener noreferrer">Abrir console ao vivo</a><a class="button" href="{{.DocsURL}}" target="_blank" rel="noopener noreferrer">Swagger</a><a class="button" href="{{.GitHubURL}}" target="_blank" rel="noopener noreferrer">GitHub</a><a class="button" href="{{.ReleaseURL}}" target="_blank" rel="noopener noreferrer">Release</a></div></div>
       <div class="terminal" aria-label="Exemplo de entrega"><div class="top"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div><pre><span class="code-muted">POST</span> <span class="code-cyan">/v1/events</span>
 Authorization: Bearer wde_...
 Idempotency-Key: checkout_8472

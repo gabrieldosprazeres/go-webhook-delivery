@@ -5,6 +5,63 @@ dos commits convencionais do repositório.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-25
+
+### Adicionado
+
+- Console web Go SSR/BFF responsivo com sessão derivada de API key, listagem de
+  endpoints e deliveries, timeline de tentativas, criação de endpoint, publicação de
+  evento, replay e métricas do próprio workspace.
+- Migration lógica v6 com sessões opacas, expiração idle/absolute, revogação,
+  auditoria, purge bounded, role PostgreSQL exclusiva e índices de fila/métricas.
+- Observabilidade operacional privada com OpenTelemetry Collector, Prometheus, Tempo
+  e Grafana provisionados como código, incluindo dois dashboards e canário de trace.
+- Smoke Playwright/Axe em Chromium desktop/mobile, com evidências de layout,
+  acessibilidade, login, cookie e logout.
+
+### Segurança
+
+- Cookie `__Host-`, CSP estrita, CSRF vinculado à sessão, validação de `Origin`, rate
+  limit antes do lookup, scopes vivos, máximo de cinco sessões e isolamento por RLS.
+- Grafana limitado ao loopback/túnel SSH; Prometheus, Tempo, Collector e listeners
+  operacionais permanecem sem domínio ou porta pública.
+- Limite global de borda do console é aplicado antes de sessão, banco e tracing; Tempo
+  usa `tmpfs` de 256 MiB, limites de ingestão e alerta para descarte de spans.
+- Artefatos do browser smoke são sanitizados, validados com canário e enviados
+  somente após sucesso; trace, vídeo e screenshot automático do login ficam
+  desligados.
+- Supply chain ampliada para as imagens pinadas de Collector, Prometheus, Tempo e
+  Grafana, com SBOM e bloqueio de vulnerabilidades High/Critical.
+
+### Corrigido
+
+- Logout agora falha fechado, não consome quota de endpoint e está disponível também
+  na navegação mobile.
+- `Referrer-Policy` compatível com a defesa de CSRF em formulários reais e atualização
+  de métricas pausável no lugar do meta-refresh inacessível.
+- Métrica de fila atual inclui itens antigos, purge respeita limite físico total e o
+  downgrade da migration serializa escritores concorrentes.
+- Dashboards do worker usam séries corretamente escopadas e links externos da vitrine
+  abrem em nova página sem desalinhamento do terminal.
+- Bind privado do Grafana usa bridge dedicada sem pares para funcionar em versões
+  atuais do Docker, com pré-instalação e auto-update de plugins desabilitados.
+- Prometheus atualizado para `v3.15.0-distroless`, que incorpora gRPC-Go `v1.83.2`
+  e elimina os achados High `CVE-2026-84304` e `CVE-2026-84445`; Tempo promovido ao
+  digest limpo de `3.1.0-rc.1` enquanto a linha estável ainda carrega dependências
+  vulneráveis.
+- Exceções temporárias do Grafana são escopadas ao digest e ao caminho, preservadas
+  no relatório Trivy, justificadas e expiram em `2026-10-09`; o plugin Zipkin não
+  utilizado permanece desabilitado e fora do scan.
+
+### Validação
+
+- Code Review final aprovado com zero blocker, warning ou suggestion.
+- QA aprovado com 244 testes, race detector, stress dos pacotes críticos, integração
+  PostgreSQL 17, Playwright/Axe desktop/mobile e p95 de `19,76 ms` para consulta com
+  25.000 tentativas.
+- Security Audit OWASP A01–A10 aprovado para CI de release; `govulncheck`, `npm audit`
+  e Gitleaks sem achados.
+
 ## [1.1.0] — 2026-09-25
 
 ### Adicionado

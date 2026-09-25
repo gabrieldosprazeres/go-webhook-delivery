@@ -402,10 +402,13 @@ func TestMaintenanceBatchesRejectNullAndEnforcePhysicalCap(t *testing.T) {
 		{`SELECT wde.purge_retired_secrets(NULL::integer)`, "invalid purge batch"},
 		{`SELECT * FROM wde.purge_expired_metadata(NULL::integer)`, "invalid metadata purge batch"},
 		{`SELECT * FROM wde.purge_workspace(NULL::integer)`, "invalid workspace purge batch"},
+		{`SELECT wde.purge_console_sessions(NULL::integer)`, "console_session_invalid"},
+		{`SELECT wde.purge_console_sessions(0)`, "console_session_invalid"},
 		{`SELECT wde.purge_expired_payloads(1001)`, "invalid purge batch"},
 		{`SELECT wde.purge_retired_secrets(1001)`, "invalid purge batch"},
 		{`SELECT * FROM wde.purge_expired_metadata(1001)`, "invalid metadata purge batch"},
 		{`SELECT * FROM wde.purge_workspace(1001)`, "invalid workspace purge batch"},
+		{`SELECT wde.purge_console_sessions(1001)`, "console_session_invalid"},
 	}
 	for _, probe := range queries {
 		if _, err := worker.Exec(ctx, probe.query); err == nil || !strings.Contains(err.Error(), probe.want) {
@@ -443,6 +446,13 @@ func TestMaintenanceBatchesRejectNullAndEnforcePhysicalCap(t *testing.T) {
 	}
 	if after := readState(); after != before {
 		t.Fatalf("rejected calls mutated state before=%v after=%v", before, after)
+	}
+	var processedSessions int
+	if err := worker.QueryRow(ctx, `SELECT wde.purge_console_sessions(1000)`).Scan(&processedSessions); err != nil {
+		t.Fatal(err)
+	}
+	if processedSessions < 0 || processedSessions > 1000 {
+		t.Fatalf("console session physical cap=%d", processedSessions)
 	}
 	var attempts, replays, rotations, deliveries, events, audits, buckets int
 	if err := worker.QueryRow(ctx, `SELECT * FROM wde.purge_expired_metadata(1000)`).Scan(
@@ -495,16 +505,39 @@ func TestRetentionRunnerDrainsLargeExpiredBucketBacklog(t *testing.T) {
 		FROM generate_series(1,2501) value ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatal(err)
 	}
-	runner := retention.NewRunner(retention.NewPostgresStore(worker), time.Hour)
-	report := runner.RunOnce(ctx)
-	var remaining int
-	if err := super.QueryRow(ctx, `SELECT count(*) FROM wde.rate_limit_buckets
-		WHERE expires_at<=transaction_timestamp()`).Scan(&remaining); err != nil {
+	workspaceID, keyID := uuid.New(), uuid.New()
+	if _, err := super.Exec(ctx, `INSERT INTO wde.workspaces(id,name)
+		VALUES($1,'session-retention')`, workspaceID); err != nil {
 		t.Fatal(err)
 	}
-	if report.Counts.Buckets < 2501 || report.Batches < 27 || report.Backlog != 0 ||
-		report.OldestAge != 0 || remaining != 0 || runner.Ready() != nil {
-		t.Fatalf("report=%+v remaining=%d ready=%v", report, remaining, runner.Ready())
+	if _, err := super.Exec(ctx, `INSERT INTO wde.api_keys(id,workspace_id,prefix,verifier)
+		VALUES($1,$2,'sessionretention',$3)`, keyID, workspaceID, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := super.Exec(ctx, `INSERT INTO wde.console_sessions(
+		id,workspace_id,api_key_id,token_prefix,token_verifier,status,created_at,updated_at,
+		last_seen_at,idle_expires_at,absolute_expires_at,restore_generation)
+		SELECT md5('session-'||value::text)::uuid,$1,$2,substr(md5('prefix-'||value::text),1,16),
+		decode(md5(value::text)||md5('verifier-'||value::text),'hex'),'active',
+		transaction_timestamp()-interval '2 hours',transaction_timestamp()-interval '2 hours',
+		transaction_timestamp()-interval '2 hours',transaction_timestamp()-interval '1 hour',
+		transaction_timestamp()-interval '30 minutes',(SELECT generation FROM wde.restore_control WHERE singleton)
+		FROM generate_series(1,201) value`, workspaceID, keyID); err != nil {
+		t.Fatal(err)
+	}
+	runner := retention.NewRunner(retention.NewPostgresStore(worker), time.Hour)
+	report := runner.RunOnce(ctx)
+	var remaining, activeSessions int
+	if err := super.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM wde.rate_limit_buckets WHERE expires_at<=transaction_timestamp()),
+		(SELECT count(*) FROM wde.console_sessions WHERE workspace_id=$1 AND status='active')`, workspaceID).
+		Scan(&remaining, &activeSessions); err != nil {
+		t.Fatal(err)
+	}
+	if report.Counts.Buckets < 2501 || report.Counts.Sessions < 201 || report.Batches < 27 ||
+		report.Backlog != 0 || report.OldestAge != 0 || remaining != 0 || activeSessions != 0 || runner.Ready() != nil {
+		t.Fatalf("report=%+v remaining=%d active_sessions=%d ready=%v",
+			report, remaining, activeSessions, runner.Ready())
 	}
 }
 
@@ -693,13 +726,17 @@ func TestRestoreQuarantineRevokesSnapshotBeforeReadiness(t *testing.T) {
 		t.Fatalf("key=%s workspace=%s restore=%s endpoint=%s secret=%s cleared=%v audits=%d",
 			keyStatus, workspaceStatus, restoreState, endpointStatus, secretState, secretCleared, quarantineAudits)
 	}
-	if err := database.Check(ctx, boundaryAPI, database.RoleAPI); !errors.Is(err, database.ErrUnavailable) {
+	if err := database.Check(ctx, boundaryAPI, database.RoleAPI); !errors.Is(err, database.ErrUnavailable) &&
+		!errors.Is(err, database.ErrIncompatibleSchema) {
 		t.Fatalf("quarantined readiness err=%v", err)
 	}
 	record, found, err := auth.NewPostgresLookup(boundaryAPI).LookupKey(ctx, "restore012345678")
 	if err != nil || !found || record.Status != "revoked" {
 		t.Fatalf("found=%v status=%s err=%v", found, record.Status, err)
 	}
+	// A backup from schema v5 remains quarantined until the restored database is
+	// migrated to the current v6 binary contract.
+	runGooseBoundary(t, ctx, root, boundarySuperURL, "up-to", 21)
 	if changed, err = retention.NewAdminStore(boundaryAdmin).CompleteRestore(ctx, 1); err != nil || !changed {
 		t.Fatalf("reconcile changed=%v err=%v", changed, err)
 	}

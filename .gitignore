@@ -12,6 +12,8 @@ local-credentials.json
 /coverage/
 *.coverprofile
 *.test
+/test/browser/node_modules/
+/test/browser/artifacts/
 
 # Editors and operating systems
 .DS_Store

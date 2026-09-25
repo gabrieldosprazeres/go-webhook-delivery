@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/url"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -39,7 +40,7 @@ func New(ctx context.Context, options Options) (*Service, error) {
 	if options.OTLPEndpoint == "" {
 		return service, nil
 	}
-	exporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(options.OTLPEndpoint),
+	exporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(traceEndpoint(options.OTLPEndpoint)),
 		otlptracehttp.WithTimeout(options.ExportTimeout))
 	if err != nil {
 		return service, err
@@ -55,6 +56,15 @@ func New(ctx context.Context, options Options) (*Service, error) {
 	)
 	service.provider, service.shutdown = provider, provider.Shutdown
 	return service, nil
+}
+
+func traceEndpoint(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err == nil && (parsed.Path == "" || parsed.Path == "/") {
+		parsed.Path = "/v1/traces"
+		return parsed.String()
+	}
+	return raw
 }
 
 func secureSampler(ratio float64) sdktrace.Sampler {

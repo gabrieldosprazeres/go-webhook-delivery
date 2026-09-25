@@ -1,0 +1,27 @@
+vulnerabilities:
+  - id: CVE-2026-14456
+    expired_at: 2026-10-09
+    statement: >-
+      Grafana atende HTTP sem TLS/QUIC somente no loopback da VPS, alcançável pelo
+      operador através de túnel SSH; o caminho QUIC vulnerável do OpenSSL não é usado.
+  - id: CVE-2026-43871
+    paths:
+      - usr/share/grafana/bin/grafana
+    expired_at: 2026-10-09
+    statement: >-
+      A configuração provisiona apenas Prometheus e Tempo e não aceita entrada
+      Thrift; o Grafana exige autenticação e só é alcançável pelo túnel SSH.
+  - id: CVE-2026-21728
+    paths:
+      - usr/share/grafana/bin/grafana
+    expired_at: 2026-10-09
+    statement: >-
+      O código Tempo embutido no cliente Grafana não hospeda o serviço vulnerável;
+      consultas são autenticadas, privadas e encaminhadas ao Tempo corrigido.
+  - id: CVE-2026-28377
+    paths:
+      - usr/share/grafana/bin/grafana
+    expired_at: 2026-10-09
+    statement: >-
+      O cliente Grafana não executa o endpoint de status vulnerável e o Tempo usa
+      backend local efêmero, sem S3 nem chave de criptografia configurada.

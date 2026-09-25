@@ -5,7 +5,7 @@
 ## Stack
 
 - Go 1.27.x, PostgreSQL 17.x, `net/http`, `log/slog`, `pgx/v5`, `sqlc`, migrations versionadas, OpenTelemetry/Prometheus e Testcontainers.
-- Monólito modular com binários `api`, `worker` e `chaoslab`, mais os servidores estáticos `showcase` e `docs`; sem frontend de negócio, Redis, Kafka ou Kubernetes no MVP.
+- Monólito modular com binários `api`, `worker`, `console` e `chaoslab`, mais os servidores estáticos `showcase` e `docs`; o console é SSR/BFF em Go, sem framework SPA, Redis, Kafka ou Kubernetes.
 
 ## Regras de negócio permanentes
 
@@ -19,6 +19,12 @@
 - Chaos Lab e profiling não podem integrar a superfície/imagem produtiva.
 - A vitrine `showcase` é somente apresentação: não acessa banco, segredos ou regras de negócio.
 - `docs` serve o OpenAPI e assets Swagger pinados, sem persistir autorização no navegador; não acessa banco ou secrets.
+- A API key apresentada no login do console existe somente durante a requisição; nunca entra em cookie, sessão, HTML, URL, storage, log, trace ou métrica.
+- Sessões do console usam token opaco, verificador HMAC no PostgreSQL, 15 minutos de inatividade e 60 minutos absolutos; scopes são relidos da API key.
+- Toda mutação do console exige scope, `Origin` same-origin e CSRF vinculado à sessão.
+- Observabilidade do cliente é sempre agregada e tenant-scoped via PostgreSQL. Nunca adicionar tenant ou resource ID como label Prometheus.
+- Prometheus, Tempo, OTel Collector e listeners operacionais não recebem ingress público. Grafana é somente operacional e autenticado.
+- OTLP HTTP em produção só é permitido com opt-in para `http://otel-collector:4318` na rede Docker interna dedicada.
 
 ## Regras técnicas do projeto
 
@@ -41,4 +47,5 @@
 - `docs/webhook-delivery-engine-backlog.md` — sprints e tasks (próxima etapa).
 - `docs/webhook-delivery-engine-status.md` — progresso do pipeline (quando criado).
 - `docs/easypanel-deployment.md` — topologia e runbook da demonstração pública.
+- `docs/console-observability-plan.md` — escopo, contrato, backlog e gates do console/observabilidade.
 - `docs/webhook-delivery-engine-security-audit-easypanel.md` — gate de segurança do deploy.

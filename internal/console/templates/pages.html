@@ -1,0 +1,49 @@
+{{define "login"}}<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}} · Webhook Engine</title><link rel="stylesheet" href="/static/app.css"></head>
+<body class="login-body"><main class="login-shell"><section class="login-copy"><div class="eyebrow">CONSOLE · GO + POSTGRESQL</div>
+<h1>Veja cada tentativa. Entenda cada falha.</h1><p>Use uma API key do workspace. A credencial é validada uma vez e substituída por uma sessão curta; ela não fica salva no navegador.</p></section>
+<section class="panel login-card"><span class="kicker">Conectar workspace</span><h2>Acesse o motor</h2>
+{{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
+<form method="post" action="/session"><input type="hidden" name="csrf_token" value="{{.CSRF}}">
+<label>API key<input name="api_key" type="password" autocomplete="off" required placeholder="wde_live_..."></label>
+<button class="button primary" type="submit">Conectar com segurança</button></form>
+<p class="hint">Sessão: 15 min de inatividade · 60 min no total</p></section></main></body></html>{{end}}
+
+{{define "app"}}<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}} · Webhook Engine</title><link rel="stylesheet" href="/static/app.css">{{if eq .View "dashboard"}}<script src="/static/app.js" defer></script>{{end}}</head><body>
+<div class="app-shell"><aside><a class="brand" href="/app">webhook<span>.</span>engine</a><nav>
+<a href="/app">Visão geral</a><a href="/app/endpoints">Endpoints</a><a href="/app/events/new">Testar evento</a><a href="/app/deliveries">Entregas</a></nav>
+<form method="post" action="/session/logout"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="button quiet" type="submit">Encerrar sessão</button></form></aside>
+<main class="content"><header class="page-header"><div><div class="eyebrow">WORKSPACE ATIVO</div><h1>{{.Title}}</h1></div>
+<div class="status"><i></i> engine conectada</div></header>{{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}{{if .Message}}<div class="alert">{{.Message}}</div>{{end}}
+
+{{if eq .View "dashboard"}}{{with .Metrics}}
+<div class="metrics-controls"><span id="metrics-status" role="status" aria-live="polite">Métricas atualizadas na abertura.</span><button id="metrics-refresh-toggle" class="button" type="button" hidden>Pausar atualizações</button></div>
+<section class="cards"><article><span>Entregas · 24h</span><strong data-metric="deliveries">{{.Summary.Deliveries}}</strong></article><article><span>Sucesso</span><strong data-metric="succeeded">{{.Summary.Succeeded}}</strong></article><article><span>Em retry</span><strong data-metric="retry_scheduled">{{.Summary.RetryScheduled}}</strong></article><article><span>DLQ</span><strong data-metric="dead_letter">{{.Summary.DeadLetter}}</strong></article><article><span>P95</span><strong data-metric="p95_duration_ms">{{printf "%.0f" .Summary.P95DurationMS}} ms</strong></article></section>
+<section class="grid-2"><article class="panel"><span class="kicker">FILA AGORA</span><div class="queue"><div><b data-metric="pending">{{.Summary.Pending}}</b><small>pendentes</small></div><div><b data-metric="processing">{{.Summary.Processing}}</b><small>processando</small></div><div><b data-metric="retry_scheduled">{{.Summary.RetryScheduled}}</b><small>reagendadas</small></div></div></article>
+<article class="panel"><span class="kicker">RESULTADOS</span><div class="queue"><div><b data-metric="attempts">{{.Summary.Attempts}}</b><small>tentativas</small></div><div><b data-metric="retry_attempts">{{.Summary.RetryAttempts}}</b><small>retries</small></div><div><b data-metric="failed_permanent">{{.Summary.FailedPermanent}}</b><small>falhas permanentes</small></div></div></article></section>
+<section class="panel"><div class="panel-head"><div><span class="kicker">ATIVIDADE POR HORA</span><h2>Últimas 24 horas</h2></div><a class="button" href="/app/deliveries">Ver entregas</a></div><div class="bars">{{range .Series}}<span class="{{if gt .Deliveries 0}}active{{else}}idle{{end}}" title="{{date .Bucket}} · {{.Deliveries}} entregas"></span>{{end}}</div></section>{{end}}{{end}}
+
+{{if eq .View "endpoints"}}<div class="toolbar"><p>Destinos HTTPS assinados com HMAC.</p><a class="button primary" href="/app/endpoints/new">Novo endpoint</a></div><section class="panel table-wrap"><table><thead><tr><th>Destino</th><th>Eventos</th><th>Status</th><th>Criado</th></tr></thead><tbody>{{range .EndpointItems}}<tr><td><a href="/app/endpoints/{{.ID}}">{{.URL}}</a><small>{{short .ID}}</small></td><td>{{range .EventTypes}}<span class="tag">{{.}}</span>{{end}}</td><td><span class="state success">{{.Status}}</span></td><td>{{date .CreatedAt}}</td></tr>{{else}}<tr><td colspan="4" class="empty">Nenhum endpoint cadastrado.</td></tr>{{end}}</tbody></table></section>{{if .NextCursor}}<a class="button" href="/app/endpoints?cursor={{.NextCursor}}">Próxima página</a>{{end}}{{end}}
+
+{{if eq .View "endpoint-new"}}<section class="panel form-panel"><p>O destino passa pela mesma defesa SSRF da API. Apenas HTTPS público é aceito em produção.</p><form method="post" action="/app/endpoints"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><label>URL HTTPS<input type="url" name="url" required placeholder="https://api.exemplo.com/webhooks"></label><label>Tipos de evento<textarea name="event_types" required placeholder="order.paid, order.refunded"></textarea></label><button class="button primary" type="submit">Criar endpoint</button></form></section>{{end}}
+
+{{if eq .View "endpoint-created"}}{{with .Created}}<section class="panel secret"><span class="kicker">MOSTRADO UMA ÚNICA VEZ</span><h2>Salve o segredo de assinatura agora</h2><p>O engine não consegue exibi-lo novamente.</p><code>{{.SigningSecret.Secret}}</code><dl><dt>Key ID</dt><dd>{{.SigningSecret.KeyID}}</dd><dt>Endpoint</dt><dd>{{.Endpoint.URL}}</dd></dl><a class="button primary" href="/app/events/new">Publicar evento de teste</a></section>{{end}}{{end}}
+
+{{if eq .View "endpoint-detail"}}{{with .Endpoint}}<section class="panel"><span class="state success">{{.Status}}</span><h2>{{.URL}}</h2><p>ID: <code>{{.ID}}</code></p><div>{{range .EventTypes}}<span class="tag">{{.}}</span>{{end}}</div></section>{{end}}{{end}}
+
+{{if eq .View "event-new"}}<section class="panel form-panel"><p>O evento é persistido com seu fan-out antes da resposta.</p><form method="post" action="/app/events"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><label>Idempotency-Key<input name="idempotency_key" required value="console-demo-001"></label><label>Payload JSON<textarea class="code-input" name="payload" required>{
+  "type": "order.paid",
+  "data": { "order_id": "ord_8472" }
+}</textarea></label><button class="button primary" type="submit">Publicar evento</button></form></section>{{end}}
+
+{{if eq .View "event-published"}}{{with .Published}}<section class="panel"><span class="state success">202 · aceito</span><h2>Evento persistido</h2><dl><dt>Event ID</dt><dd><code>{{.EventID}}</code></dd><dt>Deliveries</dt><dd>{{len .DeliveryIDs}}</dd><dt>Idempotente</dt><dd>{{.Duplicate}}</dd></dl><a class="button primary" href="/app/deliveries">Acompanhar entregas</a></section>{{end}}{{end}}
+
+{{if eq .View "deliveries"}}<section class="panel table-wrap"><table><thead><tr><th>Delivery</th><th>Event</th><th>Status</th><th>Atualização</th></tr></thead><tbody>{{range .Deliveries}}<tr><td><a href="/app/deliveries/{{.ID}}">{{short .ID}}</a></td><td>{{short .EventID}}</td><td><span class="state">{{.Status}}</span></td><td>{{date .UpdatedAt}}</td></tr>{{else}}<tr><td colspan="4" class="empty">Nenhuma entrega ainda.</td></tr>{{end}}</tbody></table></section>{{if .NextCursor}}<a class="button" href="/app/deliveries?cursor={{.NextCursor}}">Próxima página</a>{{end}}{{end}}
+
+{{if eq .View "delivery-detail"}}{{with .Delivery}}<section class="grid-2"><article class="panel"><span class="state">{{.Status}}</span><h2>{{short .ID}}</h2><dl><dt>Event</dt><dd><code>{{.EventID}}</code></dd><dt>Endpoint</dt><dd><code>{{.EndpointID}}</code></dd><dt>Criada</dt><dd>{{date .CreatedAt}}</dd></dl></article><article class="panel form-panel"><span class="kicker">RECUPERAÇÃO</span><form method="post" action="/app/deliveries/{{.ID}}/replays"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><label>Motivo<input name="reason" required value="Replay solicitado pelo console"></label><label>Chave idempotente<input name="idempotency_key" required value="replay-{{.ID}}"></label><button class="button" type="submit">Solicitar replay</button></form></article></section><section class="panel"><span class="kicker">TIMELINE</span><div class="timeline">{{range .Attempts}}<article><i></i><div><b>Tentativa {{.Sequence}} · {{.State}}</b><p>{{date .StartedAt}}{{with .Outcome}} · {{.}}{{end}}{{with .HTTPStatus}} · HTTP {{.}}{{end}}</p></div></article>{{else}}<p class="empty">Aguardando a primeira tentativa.</p>{{end}}</div></section>{{end}}{{end}}
+
+</main></div><nav class="mobile-nav" aria-label="Navegação principal"><a href="/app">Visão</a><a href="/app/endpoints">Endpoints</a><a href="/app/events/new">Evento</a><a href="/app/deliveries">Entregas</a>
+<form class="mobile-logout" method="post" action="/session/logout"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button type="submit">Sair</button></form></nav></body></html>{{end}}

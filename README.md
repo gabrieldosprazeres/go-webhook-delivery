@@ -3,19 +3,19 @@
 [![CI](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](api/openapi.yaml)
-[![Release](https://img.shields.io/badge/release-v1.1.0-blue)](CHANGELOG.md)
+[![Release](https://img.shields.io/badge/release-v1.2.0-blue)](CHANGELOG.md)
 
 Serviço de entrega confiável de webhooks escrito em Go. O projeto demonstra ingestão
 idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento
 multi-tenant, assinatura HMAC, defesa SSRF e operação observável.
 
-> Estado atual: `v1.1.0` concluída e validada. Code Review, QA, auditoria
-> OWASP, matriz adversarial, rollback, smoke de containers, SBOM e scans passaram sem
-> ressalvas bloqueadoras. O projeto nunca promete `exactly-once`.
+> Estado atual: release v1.2.0 com console web e observabilidade operacional privada.
+> O motor nunca promete `exactly-once`.
 
 **Demonstração:** [vitrine pública](https://webhooks.gabrieldosprazeres.com.br) ·
 [Swagger/OpenAPI](https://docs.webhooks.gabrieldosprazeres.com.br) ·
-[descoberta da API](https://api.webhooks.gabrieldosprazeres.com.br)
+[descoberta da API](https://api.webhooks.gabrieldosprazeres.com.br) ·
+[console autenticado](https://console.webhooks.gabrieldosprazeres.com.br).
 
 ## Problema e arquitetura
 
@@ -27,13 +27,16 @@ registra cada tentativa e oferece retry, dead-letter e replay com histórico ín
 ```mermaid
 flowchart LR
     Client[Produtor] -->|API key + evento| API[API Go]
+    Operator[Usuário] -->|sessão curta| Console[Console Go SSR]
+    Console -->|RLS + quotas| PG
     API -->|transação atômica| PG[(PostgreSQL 17)]
     PG -->|claim SKIP LOCKED| Worker[Workers Go]
     Worker -->|HTTPS + HMAC| Consumer[Consumidor]
     Consumer -->|sucesso / falha / 429| Worker
     Worker -->|attempt, retry ou DLQ| PG
-    API -. métricas e traces .-> Obs[Prometheus / OpenTelemetry]
+    API -. métricas e traces .-> Obs[Collector / Prometheus / Tempo / Grafana]
     Worker -. métricas e traces .-> Obs
+    Console -. métricas e traces .-> Obs
 ```
 
 O PostgreSQL atua como fonte de verdade e fila durável. API e worker são binários
@@ -57,6 +60,9 @@ As ferramentas Go ficam pinadas no `go.mod` e são executadas com `go tool`.
 - Docker 29+ com Docker Compose;
 - GNU Make e `rg` (ripgrep).
 
+O smoke opcional de navegador também usa Node.js 26 e Chromium via Playwright; Node
+não entra nas imagens nem no runtime do produto.
+
 ## Início rápido
 
 A jornada reproduzível completa cria um PostgreSQL efêmero isolado, compila os binários e demonstra bootstrap, HMAC, rotação com assinatura dupla, replay, retry, DLQ e métricas. Em uma máquina com os pré-requisitos, ela termina em menos de 10 minutos e remove credenciais/processos/volume ao sair:
@@ -65,7 +71,7 @@ A jornada reproduzível completa cria um PostgreSQL efêmero isolado, compila os
 make quickstart
 ```
 
-Os artefatos sensíveis ficam em um diretório temporário `0700`; a credencial sintética é criada com modo `0600` e não aparece na linha de comando ou na saída. Portas alternativas podem ser definidas por `WDE_DEMO_{POSTGRES,API,API_OPS,WORKER_OPS,CHAOS}_PORT`.
+Os artefatos sensíveis ficam em um diretório temporário `0700`; a credencial sintética é criada com modo `0600` e não aparece na linha de comando ou na saída. Portas alternativas podem ser definidas por `WDE_DEMO_{POSTGRES,API,API_OPS,WORKER_OPS,CHAOS}_PORT`; o console mantido pelo Compose usa `WDE_CONSOLE_PORT` e `WDE_CONSOLE_OPS_PORT`.
 
 Para manter o ambiente manual em execução:
 
@@ -74,7 +80,7 @@ cp .env.example .env
 docker compose --profile core up --build
 ```
 
-O profile `core` inicia PostgreSQL 17, executa a migration em um job separado e somente depois inicia API e worker. Os processos de runtime nunca executam migrations.
+O profile `core` inicia PostgreSQL 17, executa a migration em um job separado e somente depois inicia API, worker e console. Os processos de runtime nunca executam migrations.
 
 Em outro terminal:
 
@@ -83,6 +89,12 @@ curl -i http://127.0.0.1:9090/livez
 curl -i http://127.0.0.1:9090/readyz
 curl -i http://127.0.0.1:9090/metrics
 ```
+
+O console local fica em [http://127.0.0.1:8082](http://127.0.0.1:8082). Cole no login
+a `api_key` gerada pelo bootstrap. A chave é validada somente nessa requisição e trocada
+por uma sessão opaca de 15 minutos de inatividade e 60 minutos absolutos. Dentro do
+painel é possível cadastrar endpoints, publicar eventos, acompanhar delivery/tentativas,
+pedir replay e ver métricas agregadas das últimas 24 horas do próprio workspace.
 
 Para incluir o Chaos Lab isolado:
 
@@ -114,14 +126,19 @@ O arquivo criado contém `api_key`. O [quickstart detalhado](docs/quickstart.md)
 ## Demonstração pública no EasyPanel
 
 O repositório inclui uma topologia produtiva separada em
-[`compose.easypanel.yaml`](compose.easypanel.yaml). Ela publica três superfícies:
+[`compose.easypanel.yaml`](compose.easypanel.yaml). Ela publica quatro superfícies de produto:
 
 - `showcase:8080`: landing page em pt-BR para recrutadores e apresentação do case;
 - `swagger:8080`: contrato OpenAPI navegável;
 - `api:8080`: API real, autenticada e isolada das probes operacionais.
+- `console:8082`: painel SSR autenticado por sessão derivada da API key.
 
-PostgreSQL, migration, worker e portas operacionais não recebem domínio ou porta
-pública. No host único, API/worker/migrator acessam o PostgreSQL por um volume de
+PostgreSQL, migration, worker, Collector, Prometheus, Tempo e portas operacionais não
+recebem domínio ou porta pública. Grafana é uma superfície exclusiva do operador,
+autenticada, ligada somente ao loopback do host e acessada por túnel SSH; ela permanece
+separada da demonstração para usuários. Uma bridge Docker dedicada sem outros serviços
+materializa esse bind de loopback sem colocar o Grafana na rede de ingress. No host único,
+API/worker/console/migrator acessam o PostgreSQL por um volume de
 socket Unix protegido; o banco usa SCRAM e não abre listener TCP. Segredos são
 montados como arquivos `0400` no UID do processo e nunca entram na imagem ou no Git.
 
@@ -160,6 +177,10 @@ Principais variáveis:
 | `WDE_API_HTTP_ADDR` | listener da API; default `:8080` |
 | `WDE_API_OPERATIONAL_ADDR` | probes da API; default `127.0.0.1:9090` |
 | `WDE_WORKER_OPERATIONAL_ADDR` | probes do worker; default `127.0.0.1:9091` |
+| `WDE_CONSOLE_HTTP_ADDR` | listener do console; default `:8082` |
+| `WDE_CONSOLE_OPERATIONAL_ADDR` | probes privadas do console; default `127.0.0.1:9092` |
+| `WDE_CONSOLE_ORIGIN` | origin exata usada na defesa CSRF; HTTPS obrigatório em produção |
+| `WDE_OTEL_ALLOW_PRIVATE_HTTP` | opt-in produtivo somente para `http://otel-collector:4318` na rede privada |
 | `WDE_CHAOSLAB_HTTP_ADDR` | listener local; default `127.0.0.1:8081` |
 | `WDE_ALLOW_HTTP_DESTINATIONS` | habilita explicitamente destinos HTTP loopback fora de produção |
 | `WDE_OTEL_EXPORT_TIMEOUT` | orçamento do export/flush, obrigatório entre `100ms` e `10s`; default `5s` |
@@ -247,9 +268,9 @@ aleatórios. Keyrings usam JSON versionado, também com chaves de exatamente 32 
 
 Peppers de autenticação, idempotência, fingerprint, dimensões de quota e cursor, assim como os keyrings de payload/assinatura, devem ter materiais distintos. Arquivos vazios, formatos desconhecidos, chaves curtas, versões duplicadas e JSON com campos desconhecidos impedem o startup. A API e o worker também validam conexão, role PostgreSQL e versão da migration.
 
-`/livez`, `/readyz` e `/metrics` existem somente nos listeners operacionais. Liveness indica apenas processo vivo. Readiness valida role/schema lógico v5, quarentena de restore e keyrings; no worker também exige scheduler ativo e retenção saudável. A superfície pública da API responde `404` para essas rotas. Não há `pprof` registrado em produção.
+`/livez`, `/readyz` e `/metrics` existem somente nos listeners operacionais. Liveness indica apenas processo vivo. Readiness valida role/schema lógico v6, quarentena de restore e keyrings; no worker também exige scheduler ativo e retenção saudável. As superfícies públicas da API e do console não expõem métricas operacionais. Não há `pprof` registrado em produção.
 
-Métricas usam somente dimensões bounded (`route`, método, classe HTTP, outcome e categoria). Nunca há workspace, endpoint, evento, delivery, IP ou URL em labels. Traces correlacionam request, evento, delivery e tentativa por IDs opacos; não capturam payload, API key, HMAC, URL, query, headers, ciphertext ou resposta externa. O exportador OTLP é opcional e sua indisponibilidade não interrompe ingestão/entrega. Em produção, o endpoint OTLP precisa usar HTTPS.
+Métricas usam somente dimensões bounded (`route`, método, classe HTTP, outcome e categoria). Nunca há workspace, endpoint, evento, delivery, IP ou URL em labels. Traces correlacionam request, evento, delivery e tentativa por IDs opacos; não capturam payload, API key, HMAC, URL, query, headers, ciphertext ou resposta externa. O exportador OTLP é opcional e sua indisponibilidade não interrompe ingestão/entrega. Em produção ele usa HTTPS, exceto pelo opt-in estrito do Collector no hostname fixo da rede Docker interna. O usuário vê métricas tenant-scoped calculadas no PostgreSQL; Prometheus/Grafana/Tempo são ferramentas do operador. O Tempo usa armazenamento efêmero com teto de 256 MiB, limites de ingestão e alerta de descarte, evitando crescimento irrestrito na VPS.
 
 O Chaos Lab local oferece `POST /success`, `/fail-n`, `/timeout`, `/rate-limit`, `/permanent-failure` e `/verify-signature`, além de `/configure`, `/reset` e o estado agregado seguro em `GET /state`. Parâmetros opcionais de teste têm limites estritos; os defaults funcionam em URLs de webhook sem query. Ele nunca ecoa corpo ou segredo.
 
@@ -275,6 +296,7 @@ make benchmark
 make soak
 make container-smoke
 make easypanel-smoke
+make browser-smoke
 WDE_SUPPLY_CHAIN_OUTPUT="$(mktemp -d)" make supply-chain
 make secret-scan
 make check
@@ -297,11 +319,14 @@ make migrate-up
 ## Estrutura
 
 ```text
-cmd/                 composition roots de api, worker, chaoslab, showcase e docs
+cmd/                 composition roots de api, worker, console, chaoslab, showcase e docs
 internal/auth/       API keys, principal e bootstrap/revogacao
 internal/endpoint/   destinos, subscriptions e segredo de assinatura
 internal/event/      ingresso idempotente e fan-out transacional
 internal/delivery/   claim, envio HTTP e timeline
+internal/console/    painel SSR/BFF, CSP, CSRF e jornadas humanas
+internal/consolesession/ sessões opacas, expiração, revogação e auditoria
+internal/insights/   métricas tenant-scoped das últimas 24 horas
 internal/outboundhttp/ parser, resolução e dialer anti-SSRF
 internal/retention/  purge, exclusão e restore quarantine
 internal/signing/    protocolo HMAC v1
@@ -326,6 +351,7 @@ docs/                PRD, arquitetura, ADRs, segurança, backlog e status
 - [Política de segurança](SECURITY.md)
 - [Auditoria de segurança final](docs/webhook-delivery-engine-security-audit.md)
 - [Auditoria de segurança do deploy EasyPanel](docs/webhook-delivery-engine-security-audit-easypanel.md)
+- [Auditoria de segurança do console e observabilidade](docs/webhook-delivery-engine-security-audit-console-observability.md)
 - [QA final da Sprint 6](docs/webhook-delivery-engine-qa-sprint-6.md)
 - [Runbook operacional](docs/operations-runbook.md)
 - [Demonstração de portfólio](docs/demo-runbook.md)

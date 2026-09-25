@@ -14,6 +14,7 @@ type TelemetryConfig struct {
 	OTLPEndpoint     string
 	ExportTimeout    time.Duration
 	TraceSampleRatio float64
+	AllowPrivateHTTP bool
 }
 
 func defaultTelemetryConfig() TelemetryConfig {
@@ -32,6 +33,10 @@ func applyTelemetryEnvironment(cfg *Config, lookup func(string) (string, bool)) 
 		if err != nil {
 			return errors.New("config: WDE_OTEL_TRACE_SAMPLE_RATIO must be a number")
 		}
+	}
+	cfg.Telemetry.AllowPrivateHTTP, err = boolEnv(lookup, "WDE_OTEL_ALLOW_PRIVATE_HTTP", false)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -54,7 +59,10 @@ func (cfg Config) validateTelemetry() error {
 		return errors.New("config: WDE_OTEL_EXPORTER_OTLP_ENDPOINT is invalid")
 	}
 	if cfg.Profile == ProfileProduction && parsed.Scheme != "https" {
-		return errors.New("config: WDE_OTEL_EXPORTER_OTLP_ENDPOINT must use https in production")
+		private := cfg.Telemetry.AllowPrivateHTTP && endpoint == "http://otel-collector:4318" && parsed.Path == ""
+		if !private {
+			return errors.New("config: production OTLP must use https unless it is the opted-in private collector")
+		}
 	}
 	return nil
 }

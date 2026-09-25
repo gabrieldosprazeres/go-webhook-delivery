@@ -11,6 +11,7 @@ func TestShowcaseRendersConfiguredLinksAndSecurityHeaders(t *testing.T) {
 	handler := routes(pageData{
 		APIURL:      "https://api.example.test",
 		DocsURL:     "https://docs.example.test",
+		ConsoleURL:  "https://console.example.test",
 		GitHubURL:   "https://github.example.test/project",
 		ReleaseURL:  "https://github.example.test/project/releases/v1",
 		LinkedInURL: "https://linkedin.example.test/person",
@@ -43,6 +44,7 @@ func TestShowcaseKeepsTerminalAlignedAndOpensExternalLinksInNewTab(t *testing.T)
 	handler := routes(pageData{
 		APIURL:      "https://api.example.test",
 		DocsURL:     "https://docs.example.test",
+		ConsoleURL:  "https://console.example.test",
 		GitHubURL:   "https://github.example.test/project",
 		ReleaseURL:  "https://github.example.test/project/releases/v1",
 		LinkedInURL: "https://linkedin.example.test/person",
@@ -55,12 +57,13 @@ func TestShowcaseKeepsTerminalAlignedAndOpensExternalLinksInNewTab(t *testing.T)
 	if strings.Contains(body, "transform:rotate(") {
 		t.Fatal("terminal must not be rotated")
 	}
-	if count := strings.Count(body, `target="_blank"`); count != 7 {
-		t.Fatalf("external links with target=_blank=%d want=7", count)
+	if count := strings.Count(body, `target="_blank"`); count != 8 {
+		t.Fatalf("external links with target=_blank=%d want=8", count)
 	}
 	for url, want := range map[string]int{
 		"https://api.example.test":                        1,
 		"https://docs.example.test":                       2,
+		"https://console.example.test":                    1,
 		"https://github.example.test/project":             2,
 		"https://github.example.test/project/releases/v1": 1,
 		"https://linkedin.example.test/person":            1,

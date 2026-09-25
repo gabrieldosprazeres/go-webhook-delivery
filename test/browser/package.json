@@ -1,0 +1,12 @@
+{
+  "name": "wde-console-browser-smoke",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test artifact-sanitizer.test.mjs && node run-playwright.mjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0"
+  }
+}

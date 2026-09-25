@@ -45,6 +45,26 @@ func NewEdge(policy EdgePolicy, pepper [32]byte) *EdgeLimiter {
 }
 
 func (l *EdgeLimiter) Middleware(next http.Handler) http.Handler {
+	return l.middleware(next, func(r *http.Request) string {
+		prefix, _ := auth.PresentedPrefix(r.Header.Get("Authorization"))
+		return prefix
+	})
+}
+
+// LoginMiddleware bounds and parses the login form once so the API-key prefix
+// participates in throttling without retaining or logging the raw credential.
+func (l *EdgeLimiter) LoginMiddleware(next http.Handler) http.Handler {
+	return l.middleware(next, func(r *http.Request) string {
+		r.Body = http.MaxBytesReader(nil, r.Body, 8<<10)
+		if err := r.ParseForm(); err != nil {
+			return ""
+		}
+		prefix, _ := auth.PresentedTokenPrefix(r.FormValue("api_key"))
+		return prefix
+	})
+}
+
+func (l *EdgeLimiter) middleware(next http.Handler, prefixOf func(*http.Request) string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case l.slots <- struct{}{}:
@@ -53,8 +73,7 @@ func (l *EdgeLimiter) Middleware(next http.Handler) http.Handler {
 			writeEdgeLimit(w, r, 1)
 			return
 		}
-		prefix, _ := auth.PresentedPrefix(r.Header.Get("Authorization"))
-		allowed, retryAfter := l.allow(requestOrigin(r), prefix)
+		allowed, retryAfter := l.allow(requestOrigin(r), prefixOf(r))
 		if !allowed {
 			writeEdgeLimit(w, r, retryAfter)
 			return

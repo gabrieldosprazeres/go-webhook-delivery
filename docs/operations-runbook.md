@@ -56,6 +56,35 @@ recuperação, acompanhe backlog, idade mais antiga, attempts, retries e DLQ. Se
 falhar, mantenha o backoff e `Retry-After`; não aumente concorrência sem medir banco,
 egress e capacidade do consumidor.
 
+## Observabilidade
+
+O usuário do produto acessa somente o resumo e a série de 24 horas do próprio
+workspace no console. Essa visão vem de consultas PostgreSQL com RLS e não expõe
+Prometheus, traces ou métricas de outro tenant.
+
+O operador usa o Grafana autenticado. Prometheus, Tempo e OTel Collector permanecem
+na rede Docker `telemetry-private`, sem domínio e sem porta publicada. OTLP/HTTP é um
+protocolo de ingestão, não uma interface web: API, worker e console enviam traces para
+`http://otel-collector:4318`, o Collector redige atributos e encaminha ao Tempo. O
+Prometheus coleta apenas os listeners operacionais privados.
+
+No EasyPanel, o Grafana publica somente `127.0.0.1:33000`. Acesse por túnel SSH com
+`ssh -N -L 33000:127.0.0.1:33000 <usuario-vps>@2.24.90.172` e abra
+`http://localhost:33000`. Nunca crie domínio ou bind `0.0.0.0` para Grafana,
+Prometheus, Tempo ou Collector.
+
+O Tempo grava traces em `tmpfs` com teto físico de 256 MiB e os perde em restart.
+Ingestão acima de 1 MiB/s, burst de 2 MiB, 2.000 traces ativos por tenant interno,
+atributo acima de 4 KiB ou trace acima de 1 MiB é descartada de forma controlada.
+Consulte a regra `WDETempoDiscardingSpans` no Prometheus/Grafana: se estiver firing,
+reduza sampling ou investigue cardinalidade/tamanho antes de elevar qualquer limite.
+Não substitua o `tmpfs` por volume ilimitado na VPS.
+
+No Grafana, confirme os datasources provisionados `Prometheus` e `Tempo` e os painéis
+`WDE · Runtime` e `WDE · Delivery Engine`. Investigue por janela temporal e IDs opacos;
+nunca copie payload, API key, segredo, URL ou header para uma anotação. A queda de
+Grafana/Prometheus/Tempo/Collector não deve retirar API, worker ou console de readiness.
+
 ## Pacote, imagem ou ferramenta comprometida
 
 Interrompa o rollout e coloque os workloads do digest afetado fora de tráfego; não
@@ -101,9 +130,9 @@ GOOSE_DRIVER=postgres GOOSE_DBSTRING="$WDE_MIGRATOR_DATABASE_URL" \
 ```
 
 O DSN não deve estar na linha de comando nem em evidências. O ensaio automatizado cria
-PostgreSQL 17 em `tmpfs`, consulta status, prova `down-to 19 → up 20` vazio, carrega
-dados v5 e exige que o wrapper recuse `down-to 0` antes de qualquer mutação. O ensaio
-confirma schema físico 20/lógico 5 e preservação dos dados:
+PostgreSQL 17 em `tmpfs`, consulta status, prova `down-to 20 → up 21` vazio, cria uma
+sessão do console e exige que o downgrade v6 falhe atomicamente. O ensaio também mantém
+o guard independente da migration 20 e confirma schema físico 21/lógico 6:
 
 ```bash
 make rollback-rehearsal

@@ -16,7 +16,8 @@ x-app-environment: &app-environment
   WDE_SHUTDOWN_TIMEOUT: ${WDE_SHUTDOWN_TIMEOUT:-30s}
   WDE_INGRESS_TLS_TERMINATED: "true"
   WDE_ALLOW_HTTP_DESTINATIONS: "false"
-  WDE_OTEL_EXPORTER_OTLP_ENDPOINT: ${WDE_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  WDE_OTEL_EXPORTER_OTLP_ENDPOINT: ${WDE_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+  WDE_OTEL_ALLOW_PRIVATE_HTTP: "true"
   WDE_OTEL_EXPORT_TIMEOUT: ${WDE_OTEL_EXPORT_TIMEOUT:-5s}
   WDE_OTEL_TRACE_SAMPLE_RATIO: ${WDE_OTEL_TRACE_SAMPLE_RATIO:-0.1}
 
@@ -29,13 +30,17 @@ services:
       - migrator_pgpass
       - api_pgpass
       - worker_pgpass
+      - console_pgpass
       - auth_pepper
       - idempotency_pepper
       - fingerprint_pepper
       - rate_limit_pepper
       - cursor_pepper
+      - console_session_pepper
+      - console_csrf_pepper
       - payload_keyring
       - signing_keyring
+      - grafana_admin_password
     volumes:
       - application-secrets:/materialized
       - ./deployments/easypanel/materialize-secrets.sh:/scripts/materialize-secrets.sh:ro
@@ -84,6 +89,10 @@ services:
         uid: "999"
         gid: "999"
         mode: 0400
+      - source: console_pgpass
+        uid: "999"
+        gid: "999"
+        mode: 0400
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - postgres-socket:/var/run/postgresql
@@ -105,6 +114,30 @@ services:
           pids: 256
     restart: unless-stopped
 
+  roles-init:
+    image: postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
+    network_mode: none
+    entrypoint: [bash, /scripts/ensure-console-roles.sh]
+    secrets:
+      - postgres_password
+      - console_pgpass
+    volumes:
+      - postgres-socket:/var/run/postgresql:ro
+      - ./deployments/postgres/ensure-console-roles.sh:/scripts/ensure-console-roles.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64M
+          pids: 32
+    restart: "no"
+
   migrate:
     image: webhook-delivery-engine-migrate:${WDE_IMAGE_TAG:-easypanel}
     build:
@@ -125,6 +158,8 @@ services:
       postgres:
         condition: service_healthy
       secrets-init:
+        condition: service_completed_successfully
+      roles-init:
         condition: service_completed_successfully
     <<: *app-security
     tmpfs:
@@ -163,6 +198,7 @@ services:
       - postgres-socket:/var/run/postgresql:ro
       - application-secrets:/run/secrets:ro
     expose: ["8080"]
+    networks: [default, telemetry-private]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -212,6 +248,7 @@ services:
     volumes:
       - postgres-socket:/var/run/postgresql:ro
       - application-secrets:/run/secrets:ro
+    networks: [default, telemetry-private]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -232,6 +269,168 @@ services:
           pids: 128
     restart: unless-stopped
 
+  console:
+    image: webhook-delivery-engine-console:${WDE_IMAGE_TAG:-easypanel}
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      target: runtime
+      args:
+        SERVICE: console
+        WDE_VERSION: ${WDE_VERSION:-easypanel}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
+    environment:
+      <<: *app-environment
+      WDE_CONSOLE_HTTP_ADDR: :8082
+      WDE_CONSOLE_OPERATIONAL_ADDR: :9092
+      WDE_CONSOLE_ORIGIN: ${WDE_CONSOLE_ORIGIN:?WDE_CONSOLE_ORIGIN is required}
+      WDE_DATABASE_URL: postgres://wde_console@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable&passfile=%2Frun%2Fsecrets%2Fconsole_pgpass
+      WDE_AUTH_PEPPER_FILE: /run/secrets/auth_pepper
+      WDE_IDEMPOTENCY_PEPPER_FILE: /run/secrets/idempotency_pepper
+      WDE_FINGERPRINT_PEPPER_FILE: /run/secrets/fingerprint_pepper
+      WDE_RATE_LIMIT_PEPPER_FILE: /run/secrets/rate_limit_pepper
+      WDE_CURSOR_PEPPER_FILE: /run/secrets/cursor_pepper
+      WDE_CONSOLE_SESSION_PEPPER_FILE: /run/secrets/console_session_pepper
+      WDE_CONSOLE_CSRF_PEPPER_FILE: /run/secrets/console_csrf_pepper
+      WDE_PAYLOAD_KEYRING_FILE: /run/secrets/payload_keyring
+      WDE_SIGNING_KEYRING_FILE: /run/secrets/signing_keyring
+    volumes:
+      - postgres-socket:/var/run/postgresql:ro
+      - application-secrets:/run/secrets:ro
+    expose: ["8082"]
+    networks: [default, telemetry-private]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    <<: *app-security
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
+    healthcheck:
+      test: [CMD, /service, healthcheck]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.15"
+          memory: 192M
+          pids: 128
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
+    command: [--config=/etc/otelcol/config.yaml]
+    volumes:
+      - ./deployments/observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    networks: [telemetry-private]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 96M
+          pids: 64
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.15.0-distroless@sha256:b2a413d5a03ea6a76782a508d1c7947440bba3b973931a25676e278431891b01
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=512MB
+    volumes:
+      - ./deployments/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ./deployments/observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - prometheus-data:/prometheus
+    networks: [telemetry-private]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: 320M
+          pids: 64
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:3.1.0-rc.1@sha256:17ba563fb5830035faf0d99368021a53039ee50628bf1b93f17c70ba94d65ada
+    command: [-config.file=/etc/tempo/tempo.yaml]
+    volumes:
+      - ./deployments/observability/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    networks: [telemetry-private]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
+      - "/var/tempo:size=256m,mode=0750,uid=10001,gid=10001"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.15"
+          memory: 384M
+          pids: 64
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.1.6@sha256:d8276d620291d3aaae3e31dde6d63e6807afee49825f04e8aa7392bbe024216f
+    environment:
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SECURITY_ADMIN_USER: ${WDE_GRAFANA_ADMIN_USER:-operator}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SERVER_ROOT_URL: ${WDE_GRAFANA_ROOT_URL:?WDE_GRAFANA_ROOT_URL is required}
+      # Grafana is reached only through an encrypted SSH tunnel terminating on
+      # host loopback, so the browser endpoint itself is http://localhost.
+      GF_SECURITY_COOKIE_SECURE: "false"
+      GF_SECURITY_COOKIE_SAMESITE: strict
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      GF_PLUGINS_DISABLE_PLUGINS: zipkin
+      GF_INSTALL_PLUGINS: ""
+      GF_LOG_MODE: console
+    volumes:
+      - application-secrets:/run/secrets:ro
+      - grafana-data:/var/lib/grafana
+      - ./deployments/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deployments/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    expose: ["3000"]
+    ports:
+      - 127.0.0.1:${WDE_GRAFANA_LOCAL_PORT:-33000}:3000
+    networks: [telemetry-private, grafana-host-access]
+    depends_on:
+      secrets-init:
+        condition: service_completed_successfully
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    tmpfs:
+      - "/tmp:size=32m,mode=1777"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.15"
+          memory: 256M
+          pids: 128
+    restart: unless-stopped
+
   showcase:
     image: webhook-delivery-engine-showcase:${WDE_IMAGE_TAG:-easypanel}
     build:
@@ -246,6 +445,7 @@ services:
       WDE_SHOWCASE_HTTP_ADDR: :8080
       WDE_SHOWCASE_API_URL: ${WDE_SHOWCASE_API_URL:?WDE_SHOWCASE_API_URL is required}
       WDE_SHOWCASE_DOCS_URL: ${WDE_SHOWCASE_DOCS_URL:?WDE_SHOWCASE_DOCS_URL is required}
+      WDE_SHOWCASE_CONSOLE_URL: ${WDE_SHOWCASE_CONSOLE_URL:?WDE_SHOWCASE_CONSOLE_URL is required}
       WDE_SHOWCASE_GITHUB_URL: ${WDE_SHOWCASE_GITHUB_URL:-https://github.com/gabrieldosprazeres/go-webhook-delivery}
       WDE_SHOWCASE_RELEASE_URL: ${WDE_SHOWCASE_RELEASE_URL:-https://github.com/gabrieldosprazeres/go-webhook-delivery/releases}
       WDE_SHOWCASE_LINKEDIN_URL: ${WDE_SHOWCASE_LINKEDIN_URL:-https://www.linkedin.com/in/gabrieldosprazeres}
@@ -301,6 +501,16 @@ volumes:
   postgres-data:
   postgres-socket:
   application-secrets:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  telemetry-private:
+    internal: true
+  # Required for Docker to publish Grafana on host loopback. Grafana is the
+  # only service attached to this dedicated bridge.
+  grafana-host-access:
+    internal: false
 
 secrets:
   postgres_password:
@@ -311,6 +521,8 @@ secrets:
     environment: WDE_API_PGPASS
   worker_pgpass:
     environment: WDE_WORKER_PGPASS
+  console_pgpass:
+    environment: WDE_CONSOLE_PGPASS
   admin_pgpass:
     environment: WDE_ADMIN_PGPASS
   auth_pepper:
@@ -323,7 +535,13 @@ secrets:
     environment: WDE_RATE_LIMIT_PEPPER
   cursor_pepper:
     environment: WDE_CURSOR_PEPPER
+  console_session_pepper:
+    environment: WDE_CONSOLE_SESSION_PEPPER
+  console_csrf_pepper:
+    environment: WDE_CONSOLE_CSRF_PEPPER
   payload_keyring:
     environment: WDE_PAYLOAD_KEYRING
   signing_keyring:
     environment: WDE_SIGNING_KEYRING
+  grafana_admin_password:
+    environment: WDE_GRAFANA_ADMIN_PASSWORD

@@ -12,6 +12,7 @@ services:
       WDE_API_DATABASE_PASSWORD: ${WDE_API_DATABASE_PASSWORD:-api-local-only}
       WDE_WORKER_DATABASE_PASSWORD: ${WDE_WORKER_DATABASE_PASSWORD:-worker-local-only}
       WDE_ADMIN_DATABASE_PASSWORD: ${WDE_ADMIN_DATABASE_PASSWORD:-admin-local-only}
+      WDE_CONSOLE_DATABASE_PASSWORD: ${WDE_CONSOLE_DATABASE_PASSWORD:-console-local-only}
     ports:
       - "127.0.0.1:${WDE_POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -152,6 +153,68 @@ services:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:${WDE_WORKER_OPS_PORT:-9091}:9091"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, /service, healthcheck]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  console:
+    profiles: [core, demo]
+    image: webhook-delivery-engine-console:${WDE_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      target: runtime
+      args:
+        SERVICE: console
+        WDE_VERSION: ${WDE_VERSION:-dev}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
+    environment:
+      WDE_PROFILE: local
+      WDE_VERSION: compose
+      WDE_LOG_LEVEL: ${WDE_LOG_LEVEL:-info}
+      WDE_CONSOLE_HTTP_ADDR: :8082
+      WDE_CONSOLE_OPERATIONAL_ADDR: :9092
+      WDE_CONSOLE_ORIGIN: http://127.0.0.1:${WDE_CONSOLE_PORT:-8082}
+      WDE_DATABASE_URL: postgres://wde_console:${WDE_CONSOLE_DATABASE_PASSWORD:-console-local-only}@postgres:5432/wde?sslmode=disable
+      WDE_SHUTDOWN_TIMEOUT: ${WDE_SHUTDOWN_TIMEOUT:-30s}
+      WDE_DATABASE_TIMEOUT: ${WDE_DATABASE_TIMEOUT:-5s}
+      WDE_OTEL_EXPORTER_OTLP_ENDPOINT: ${WDE_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      WDE_OTEL_EXPORT_TIMEOUT: ${WDE_OTEL_EXPORT_TIMEOUT:-5s}
+      WDE_OTEL_TRACE_SAMPLE_RATIO: ${WDE_OTEL_TRACE_SAMPLE_RATIO:-0.1}
+      WDE_ALLOW_HTTP_DESTINATIONS: "true"
+      WDE_QUOTA_INGEST_GLOBAL: ${WDE_QUOTA_INGEST_GLOBAL:-10000}
+      WDE_QUOTA_INGEST_WORKSPACE: ${WDE_QUOTA_INGEST_WORKSPACE:-200}
+      WDE_QUOTA_INGEST_API_KEY: ${WDE_QUOTA_INGEST_API_KEY:-200}
+      WDE_QUOTA_INGEST_WINDOW: ${WDE_QUOTA_INGEST_WINDOW:-1s}
+      WDE_QUOTA_ENDPOINT_WRITE_GLOBAL: ${WDE_QUOTA_ENDPOINT_WRITE_GLOBAL:-6000}
+      WDE_QUOTA_ENDPOINT_WRITE_WORKSPACE: ${WDE_QUOTA_ENDPOINT_WRITE_WORKSPACE:-60}
+      WDE_QUOTA_ENDPOINT_WRITE_API_KEY: ${WDE_QUOTA_ENDPOINT_WRITE_API_KEY:-60}
+      WDE_QUOTA_ENDPOINT_WRITE_WINDOW: ${WDE_QUOTA_ENDPOINT_WRITE_WINDOW:-1m}
+      WDE_QUOTA_QUERY_GLOBAL: ${WDE_QUOTA_QUERY_GLOBAL:-30000}
+      WDE_QUOTA_QUERY_WORKSPACE: ${WDE_QUOTA_QUERY_WORKSPACE:-300}
+      WDE_QUOTA_QUERY_API_KEY: ${WDE_QUOTA_QUERY_API_KEY:-300}
+      WDE_QUOTA_QUERY_WINDOW: ${WDE_QUOTA_QUERY_WINDOW:-1m}
+      WDE_QUOTA_REPLAY_GLOBAL: ${WDE_QUOTA_REPLAY_GLOBAL:-1000}
+      WDE_QUOTA_REPLAY_WORKSPACE: ${WDE_QUOTA_REPLAY_WORKSPACE:-10}
+      WDE_QUOTA_REPLAY_API_KEY: ${WDE_QUOTA_REPLAY_API_KEY:-10}
+      WDE_QUOTA_REPLAY_RESOURCE: ${WDE_QUOTA_REPLAY_RESOURCE:-2}
+      WDE_QUOTA_REPLAY_WINDOW: ${WDE_QUOTA_REPLAY_WINDOW:-1m}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${WDE_CONSOLE_PORT:-8082}:8082"
+      - "127.0.0.1:${WDE_CONSOLE_OPS_PORT:-9092}:9092"
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
