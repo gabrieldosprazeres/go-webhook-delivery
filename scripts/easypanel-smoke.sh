@@ -145,15 +145,27 @@ done
 echo "[smoke] container hardening"
 for service in otel-collector prometheus tempo grafana; do
   container_id=$(docker compose -p "$project" --env-file "$secrets" $compose_files ps -q "$service")
-  user=$(docker inspect --format '{{.Config.User}}' "$container_id")
-  test -n "$user" && test "$user" != "0" && test "$user" != "root"
-  test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$container_id")" = "true"
-  docker inspect --format '{{json .HostConfig.CapDrop}}' "$container_id" | grep -q 'ALL'
-  docker inspect --format '{{json .HostConfig.SecurityOpt}}' "$container_id" | grep -q 'no-new-privileges'
+  hardening=$(docker inspect "$container_id")
+  printf '%s' "$hardening" | jq -c '.[0] | {
+    service: .Name, user: .Config.User, read_only: .HostConfig.ReadonlyRootfs,
+    cap_drop: .HostConfig.CapDrop, security_opt: .HostConfig.SecurityOpt
+  }'
+  printf '%s' "$hardening" | jq -e '.[0] |
+    (.Config.User != "" and .Config.User != "0" and .Config.User != "root") and
+    (.HostConfig.ReadonlyRootfs == true) and
+    ((.HostConfig.CapDrop // []) | index("ALL") != null) and
+    ((.HostConfig.SecurityOpt // []) | any(startswith("no-new-privileges")))
+  ' >/dev/null
 done
 tempo_id=$(docker compose -p "$project" --env-file "$secrets" $compose_files ps -q tempo)
-docker inspect --format '{{json .HostConfig.Tmpfs}}' "$tempo_id" |
-  jq -e '.["/var/tempo"] | contains("size=268435456")' >/dev/null
+tempo_tmpfs=$(docker inspect --format '{{json .HostConfig.Tmpfs}}' "$tempo_id")
+printf '%s\n' "$tempo_tmpfs"
+printf '%s' "$tempo_tmpfs" | jq -e '.["/var/tempo"] as $options |
+  ($options | test("(^|,)size=(256m|262144k|268435456)(,|$)")) and
+  ($options | contains("mode=0750")) and
+  ($options | contains("uid=10001")) and
+  ($options | contains("gid=10001"))
+' >/dev/null
 
 targets_ready=false
 echo "[smoke] Prometheus targets and rules"
