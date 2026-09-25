@@ -4,7 +4,14 @@ set -euo pipefail
 read_pgpass() {
   local path=$1 expected_user=$2 output_name=$3
   local line host port database username password extra
-  IFS=: read -r host port database username password extra < "${path}"
+  local -a lines=()
+  mapfile -t lines < "${path}"
+  if [[ "${#lines[@]}" -ne 1 ]]; then
+    echo "invalid pgpass for ${expected_user}" >&2
+    exit 1
+  fi
+  line=${lines[0]}
+  IFS=: read -r host port database username password extra <<< "${line}"
   if [[ "${host}" != "localhost" || "${port}" != "5432" || "${database}" != "wde" ||
         "${username}" != "${expected_user}" || -z "${password}" || -n "${extra:-}" ||
         "${password}" == *[!A-Za-z0-9_-]* ]]; then
