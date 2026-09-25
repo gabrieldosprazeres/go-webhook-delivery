@@ -62,9 +62,9 @@ segredos armazenados irrecuperáveis; rotacioná-los exige o procedimento do run
 WDE_VERSION=v1.1.0
 WDE_REVISION=<commit-publicado>
 WDE_IMAGE_TAG=v1.1.0
-WDE_SHOWCASE_API_URL=https://api.<seu-dominio>
-WDE_SHOWCASE_DOCS_URL=https://docs.<seu-dominio>
-WDE_DOCS_API_URL=https://api.<seu-dominio>
+WDE_SHOWCASE_API_URL=https://api.webhooks.gabrieldosprazeres.com.br
+WDE_SHOWCASE_DOCS_URL=https://docs.webhooks.gabrieldosprazeres.com.br
+WDE_DOCS_API_URL=https://api.webhooks.gabrieldosprazeres.com.br
 WDE_SHOWCASE_GITHUB_URL=https://github.com/gabrieldosprazeres/go-webhook-delivery
 WDE_SHOWCASE_RELEASE_URL=https://github.com/gabrieldosprazeres/go-webhook-delivery/releases
 WDE_SHOWCASE_LINKEDIN_URL=https://www.linkedin.com/in/gabrieldosprazeres
@@ -76,11 +76,11 @@ Não crie senha manual fraca e não reutilize os valores entre variáveis.
 
 No EasyPanel, cadastre exatamente:
 
-| Superfície | Serviço | Porta interna | Exposição |
-|---|---:|---:|---|
-| Página do case | `showcase` | `8080` | pública, HTTPS |
-| Swagger | `swagger` | `8080` | pública, HTTPS |
-| API | `api` | `8080` | pública, HTTPS |
+| Superfície | Hostname | Serviço | Porta interna | Exposição |
+|---|---|---:|---:|---|
+| Página do case | `webhooks.gabrieldosprazeres.com.br` | `showcase` | `8080` | pública, HTTPS |
+| Swagger | `docs.webhooks.gabrieldosprazeres.com.br` | `swagger` | `8080` | pública, HTTPS |
+| API | `api.webhooks.gabrieldosprazeres.com.br` | `api` | `8080` | pública, HTTPS |
 
 Não atribua domínio a `postgres`, `migrate`, `worker`, porta `9090` da API ou porta
 `9091` do worker. Não adicione `ports:` ao Compose produtivo. Ative certificado TLS
@@ -103,10 +103,10 @@ sucesso não são falha.
 ## 6. Verificação externa
 
 ```bash
-curl --fail --head https://<pagina-do-case>
-curl --fail --head https://docs.<seu-dominio>
+curl --fail --head https://webhooks.gabrieldosprazeres.com.br
+curl --fail --head https://docs.webhooks.gabrieldosprazeres.com.br
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  https://api.<seu-dominio>/livez)" = "404"
+  https://api.webhooks.gabrieldosprazeres.com.br/livez)" = "404"
 ```
 
 Abra a landing page em janela anônima, siga o link do Swagger e confirme que nenhum

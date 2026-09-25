@@ -14,20 +14,20 @@ Swagger UI, endpoint de descoberta e pipeline de CI.
 - `govulncheck ./...`: nenhuma vulnerabilidade Go alcançável.
 - Swagger UI `v5.33.0` é copiado como assets estáticos de uma imagem pinada por digest;
   Nginx/Node da imagem de origem não chegam ao runtime.
-- Gate obrigatório antes do deploy: ⏳ Trivy High/Critical e SBOMs das imagens
-  `showcase`/`swagger` no job `easypanel-production-smoke` em daemon limpo.
+- Gate de imagens: ✅ SBOMs CycloneDX/SPDX gerados e Trivy sem achados
+  High/Critical nas imagens `showcase`/`swagger`, em daemon limpo.
 
 ## Secrets Scan
 
 - Status: ✅ nenhum secret exposto.
-- Gitleaks examinou os 12 commits existentes e o snapshot atual de arquivos
+- Gitleaks examinou o histórico Git completo do candidato e o snapshot atual de arquivos
   versionados + untracked não ignorados.
 - `.env`, `.env.*`, certificados, chaves e `secrets/` permanecem ignorados.
 - O gerador usa CSPRNG do OpenSSL, materiais independentes, `umask 077`, arquivo
   `0600` e recusa sobrescrita.
-- Um job sem rede e com somente `CAP_CHOWN` materializa os secrets como arquivos
-  `0400` no UID específico; runtimes montam o volume em read-only. Senhas não aparecem
-  nos DSNs, imagens ou argumentos de build.
+- Um job sem rede, limitado a `CAP_CHOWN`/`CAP_FOWNER`, materializa os secrets como
+  arquivos `0400` no UID específico; runtimes montam o volume em read-only. Senhas
+  não aparecem nos DSNs, imagens ou argumentos de build.
 
 ## Headers HTTP
 
@@ -52,12 +52,13 @@ Swagger UI, endpoint de descoberta e pipeline de CI.
 - A05 Security Misconfiguration: ✅ profile `production`, HTTP de destino desativado,
   profiling ausente, nenhuma porta publicada, banco com `network_mode: none`,
   runtimes non-root/read-only/cap-drop/no-new-privileges e recursos limitados.
-- A06 Vulnerable Components: ⏳ código Go limpo; imagens novas aguardam o gate Trivy
-  obrigatório da CI antes do merge/deploy.
+- A06 Vulnerable Components: ✅ código Go sem vulnerabilidade alcançável e imagens
+  novas aprovadas no gate Trivy High/Critical.
 - A07 Authentication Failures: ✅ root público expõe apenas quatro campos fixos;
   rotas de negócio mantêm API key, scopes, quotas e revogação existentes.
 - A08 Software and Data Integrity: ✅ imagens-base/actions pinadas por SHA/digest,
-  OpenAPI validado e CI gera SBOMs; resultado final depende do job de imagens.
+  OpenAPI validado, SBOMs publicados e topologia produtiva exercitada a partir do
+  Compose versionado.
 - A09 Security Logging and Monitoring Failures: ✅ novos servidores não recebem
   secrets/dados e não logam query, header ou body; probes de API/worker não são
   publicadas.
@@ -66,12 +67,14 @@ Swagger UI, endpoint de descoberta e pipeline de CI.
 
 ## Resultado final
 
-⏳ **APROVAÇÃO CONDICIONAL** — código, configuração, análise estática, testes com race,
-OpenAPI, migrations e secrets scan estão verdes. O deploy permanece bloqueado até o
-job `easypanel-production-smoke` comprovar em daemon limpo: build, PostgreSQL/SCRAM por
-socket, ownership dos secret files, readiness, ausência de portas, rootfs read-only,
-SBOM e zero High/Critical nas duas novas imagens.
+✅ **APROVADO — apto para deploy**. O job `easypanel-production-smoke` da
+[CI #36125885550](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/runs/36125885550)
+comprovou em daemon limpo: build completo, PostgreSQL/SCRAM por socket, migrations,
+ownership `0400:65532:65532`, readiness, ausência de porta do banco, runtimes
+non-root/read-only, SBOMs e zero High/Critical nas duas imagens públicas. Testes,
+race detector, análise estática, `govulncheck`, OpenAPI e Gitleaks também passaram.
 
 O Docker local não executou esse gate por corrupção preexistente do content store
 (`input/output error` ao ler o blob pinado do PostgreSQL). Nenhum prune ou remoção foi
-feito, preservando os ambientes dos demais projetos.
+feito, preservando os ambientes dos demais projetos; a CI em daemon limpo forneceu a
+evidência final reproduzível.

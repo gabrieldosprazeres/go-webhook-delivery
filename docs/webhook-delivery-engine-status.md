@@ -1,7 +1,7 @@
 # Status: Webhook Delivery Engine
 
-**Atualizado em:** 2026-09-24
-**Branch:** `main`
+**Atualizado em:** 2026-09-25
+**Branch:** `feature/easypanel-production-demo`
 
 ## Planejamento
 
@@ -425,10 +425,11 @@ remoto permanece uma ação separada, pois este checkout não possui remote conf
 
 ## Evolução pós-MVP — demonstração produtiva no EasyPanel
 
-- 🚧 Compose produtivo separado, landing page em pt-BR e Swagger navegável.
-- 🚧 PostgreSQL isolado sem TCP, com socket Unix, SCRAM e secrets `0400`.
-- 🚧 Gerador de segredos e smoke de CI da topologia completa.
-- ⏳ Gates completos, revisão de segurança, commit/push e deploy na VPS.
+- ✅ Compose produtivo separado, landing page em pt-BR e Swagger navegável.
+- ✅ PostgreSQL isolado sem TCP, com socket Unix, SCRAM e secrets `0400`.
+- ✅ Gerador de segredos e smoke de CI da topologia completa.
+- ✅ Gates completos, revisão de segurança, commits incrementais e pull request público.
+- ⏳ Merge, release `v1.1.0` e deploy na VPS pessoal via EasyPanel.
 
 O escopo é uma demonstração de portfólio com dados sintéticos, não uma oferta
 SaaS. A decisão de host único está em `ADR-011` e o procedimento em
