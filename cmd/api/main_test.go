@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,22 @@ import (
 
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/platform/config"
 )
+
+func TestPublicIndexIsSafeServiceDiscovery(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	response := httptest.NewRecorder()
+	publicRoutes().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/json; charset=utf-8" {
+		t.Fatalf("status=%d content-type=%q", response.Code, response.Header().Get("Content-Type"))
+	}
+	var document map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["status"] != "available" || document["authentication"] != "required" || len(document) != 4 {
+		t.Fatalf("unexpected discovery document: %#v", document)
+	}
+}
 
 func TestPublicListenerDoesNotExposeProbes(t *testing.T) {
 	for _, path := range []string{"/healthz", "/livez", "/readyz", "/metrics", "/debug/pprof/"} {
