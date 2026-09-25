@@ -16,6 +16,7 @@ secret_names=(
   console_csrf_pepper
   payload_keyring
   signing_keyring
+  grafana_admin_password
 )
 
 for secret_name in "${secret_names[@]}"; do
@@ -26,6 +27,12 @@ for secret_name in "${secret_names[@]}"; do
     echo "missing required runtime secret: ${secret_name}" >&2
     exit 1
   fi
-  install -o 65532 -g 65532 -m 0400 "${source_path}" "${temporary_path}"
+  owner=65532
+  group=65532
+  if [[ "${secret_name}" == "grafana_admin_password" ]]; then
+    owner=472
+    group=0
+  fi
+  install -o "${owner}" -g "${group}" -m 0400 "${source_path}" "${temporary_path}"
   mv -f "${temporary_path}" "${target_path}"
 done

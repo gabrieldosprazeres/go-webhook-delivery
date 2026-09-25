@@ -40,6 +40,7 @@ services:
       - console_csrf_pepper
       - payload_keyring
       - signing_keyring
+      - grafana_admin_password
     volumes:
       - application-secrets:/materialized
       - ./deployments/easypanel/materialize-secrets.sh:/scripts/materialize-secrets.sh:ro
@@ -345,7 +346,6 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=7d
       - --storage.tsdb.retention.size=512MB
-      - --web.enable-lifecycle=false
     volumes:
       - ./deployments/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
       - ./deployments/observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro
@@ -402,12 +402,8 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_INSTALL_PLUGINS: ""
       GF_LOG_MODE: console
-    secrets:
-      - source: grafana_admin_password
-        uid: "472"
-        gid: "0"
-        mode: 0400
     volumes:
+      - application-secrets:/run/secrets:ro
       - grafana-data:/var/lib/grafana
       - ./deployments/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deployments/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -415,6 +411,9 @@ services:
     ports:
       - 127.0.0.1:${WDE_GRAFANA_LOCAL_PORT:-33000}:3000
     networks: [telemetry-private]
+    depends_on:
+      secrets-init:
+        condition: service_completed_successfully
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

@@ -64,10 +64,14 @@ docker compose -p "$project" --env-file "$secrets" $compose_files run --rm --no-
   count=0
   for path in /materialized/*; do
     test -f "$path"
-    test "$(stat -c "%a:%u:%g" "$path")" = "400:65532:65532"
+    expected="400:65532:65532"
+    if [ "$(basename "$path")" = "grafana_admin_password" ]; then
+      expected="400:472:0"
+    fi
+    test "$(stat -c "%a:%u:%g" "$path")" = "$expected"
     count=$((count + 1))
   done
-  test "$count" = 13
+  test "$count" = 14
 '
 
 api_id=$(docker compose -p "$project" --env-file "$secrets" $compose_files ps -q api)
