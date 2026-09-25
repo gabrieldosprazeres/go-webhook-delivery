@@ -19,6 +19,9 @@ func applyEnvironment(cfg *Config, lookup func(string) (string, bool)) error {
 	if cfg.DatabaseTimeout, err = durationEnv(lookup, "WDE_DATABASE_TIMEOUT", cfg.DatabaseTimeout); err != nil {
 		return err
 	}
+	if cfg.DatabaseLocalSocket, err = boolEnv(lookup, "WDE_DATABASE_LOCAL_SOCKET", false); err != nil {
+		return err
+	}
 	if cfg.IngressTLSTerminated, err = boolEnv(lookup, "WDE_INGRESS_TLS_TERMINATED", false); err != nil {
 		return err
 	}
@@ -101,6 +104,7 @@ func applyFlags(cfg *Config, args []string) error {
 	operationalAddr := flags.String("operational-addr", cfg.OperationalAddr, "operational HTTP listen address")
 	shutdownTimeout := flags.Duration("shutdown-timeout", cfg.ShutdownTimeout, "graceful shutdown timeout")
 	databaseTimeout := flags.Duration("database-timeout", cfg.DatabaseTimeout, "database operation timeout")
+	databaseLocalSocket := flags.Bool("database-local-socket", cfg.DatabaseLocalSocket, "declare a trusted local PostgreSQL Unix socket")
 	logLevel := flags.String("log-level", cfg.LogLevel, "log level")
 	version := flags.String("version", cfg.Version, "build version")
 	ingressTLS := flags.Bool("ingress-tls-terminated", cfg.IngressTLSTerminated, "declare trusted ingress TLS termination")
@@ -127,6 +131,7 @@ func applyFlags(cfg *Config, args []string) error {
 	}
 	applyParsedFlags(cfg, *profile, *httpAddr, *operationalAddr, *logLevel, *version)
 	cfg.ShutdownTimeout, cfg.DatabaseTimeout = *shutdownTimeout, *databaseTimeout
+	cfg.DatabaseLocalSocket = *databaseLocalSocket
 	cfg.IngressTLSTerminated, cfg.EnablePprof, cfg.AllowHTTPDestinations = *ingressTLS, *pprof, *allowHTTP
 	cfg.WorkerConcurrency, cfg.WorkerClaimBatchSize = *workerConcurrency, *workerBatch
 	cfg.WorkerWorkspaceLimit, cfg.WorkerEndpointLimit = *workerWorkspaceLimit, *workerEndpointLimit

@@ -10,6 +10,25 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /:
+    get:
+      operationId: serviceDiscovery
+      summary: Confirm the public API surface and authentication requirement
+      security: []
+      responses:
+        '200':
+          description: Safe service metadata without database or readiness details
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [service, api_version, status, authentication]
+                properties:
+                  service: {type: string, const: webhook-delivery-engine}
+                  api_version: {type: string, const: v1}
+                  status: {type: string, const: available}
+                  authentication: {type: string, const: required}
   /v1/endpoints:
     post:
       operationId: createEndpoint

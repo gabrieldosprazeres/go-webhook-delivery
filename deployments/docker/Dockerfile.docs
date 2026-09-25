@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.7
+FROM swaggerapi/swagger-ui:v5.33.0@sha256:f9b8432be04e320406157e26c3ff52a7e9a4bea7eabe5477e9636791737eb119 AS swagger-assets
+
+FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS docs-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+    go build -trimpath -ldflags="-s -w" -o /out/service ./cmd/docs
+RUN chmod 0555 /out/service
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+ARG WDE_VERSION=dev
+ARG WDE_REVISION=unknown
+LABEL org.opencontainers.image.title="webhook-delivery-swagger" \
+      org.opencontainers.image.version="${WDE_VERSION}" \
+      org.opencontainers.image.revision="${WDE_REVISION}" \
+      org.opencontainers.image.source="https://github.com/gabrieldosprazeres/go-webhook-delivery"
+COPY --from=docs-build --chown=nonroot:nonroot /out/service /service
+COPY --from=swagger-assets --chown=nonroot:nonroot /usr/share/nginx/html /static
+COPY --chown=nonroot:nonroot api/openapi.yaml /static/openapi.yaml
+COPY --chown=nonroot:nonroot deployments/swagger/swagger-initializer.js /static/swagger-initializer.js
+USER nonroot:nonroot
+ENTRYPOINT ["/service"]

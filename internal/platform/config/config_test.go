@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,6 +194,96 @@ func TestProductionRejectsUnsafeDatabaseWithoutLeakingIt(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "top-secret") || strings.Contains(err.Error(), databaseURL) {
 		t.Fatalf("Load() leaked database URL: %v", err)
+	}
+}
+
+func TestProductionAcceptsExplicitLocalDatabaseSocket(t *testing.T) {
+	dir := t.TempDir()
+	passfile := filepath.Join(dir, "worker.pgpass")
+	if err := os.WriteFile(passfile, []byte("localhost:5432:wde:wde_worker:test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(LoadOptions{
+		Service: ServiceWorker,
+		LookupEnv: mapLookup(map[string]string{
+			"WDE_PROFILE":               "production",
+			"WDE_DATABASE_LOCAL_SOCKET": "true",
+			"WDE_DATABASE_URL": "postgres://wde_worker@/wde?host=%2Fvar%2Frun%2Fpostgresql" +
+				"&sslmode=disable&passfile=" + url.QueryEscape(passfile),
+			"WDE_PAYLOAD_KEYRING_FILE": writeKeyring(t, dir, "payload.json", 1),
+			"WDE_SIGNING_KEYRING_FILE": writeKeyring(t, dir, "signing.json", 2),
+		}),
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.DatabaseLocalSocket {
+		t.Fatal("DatabaseLocalSocket = false, want true")
+	}
+}
+
+func TestDatabaseSocketDeclarationFailsClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "wrong directory", url: "postgres://worker@/wde?host=%2Ftmp&sslmode=disable"},
+		{name: "tcp override", url: "postgres://worker@db.example/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable"},
+		{name: "tls ambiguity", url: "postgres://worker@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=require"},
+		{name: "duplicate host", url: "postgres://worker@/wde?host=%2Fvar%2Frun%2Fpostgresql&host=evil&sslmode=disable"},
+		{name: "duplicate TLS mode", url: "postgres://worker@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable&sslmode=require"},
+		{name: "missing passfile", url: "postgres://worker@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable"},
+		{name: "duplicate passfile", url: "postgres://worker@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable&passfile=%2Fa&passfile=%2Fb"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateDatabaseURL(test.url, ProfileProduction, true)
+			if err == nil || !strings.Contains(err.Error(), "declared Unix socket") {
+				t.Fatalf("validateDatabaseURL() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestProductionDatabaseURLRejectsEmbeddedPasswordAndAmbiguousTarget(t *testing.T) {
+	for _, databaseURL := range []string{
+		"postgres://worker:secret@db.example/wde?sslmode=verify-full",
+		"postgres://worker@db.example/other?sslmode=verify-full",
+		"postgres://db.example/wde?sslmode=verify-full",
+		"postgres://worker@db.example/wde?sslmode=verify-full&sslmode=disable",
+		"postgres://worker@db.example/wde?sslmode=verify-full#fragment",
+	} {
+		if err := validateDatabaseURL(databaseURL, ProfileProduction, false); err == nil {
+			t.Fatalf("validateDatabaseURL(%q) accepted", databaseURL)
+		}
+	}
+}
+
+func TestProductionDatabaseSocketRejectsInsecurePassfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worker.pgpass")
+	if err := os.WriteFile(path, []byte("localhost:5432:wde:wde_worker:test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// WriteFile applies the process umask; force the intentionally insecure
+	// precondition so this test is deterministic under the adversarial 0077 umask.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	databaseURL := "postgres://worker@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable&passfile=" + url.QueryEscape(path)
+	err := validateDatabaseURL(databaseURL, ProfileProduction, true)
+	if err == nil || !strings.Contains(err.Error(), "permissions") || strings.Contains(err.Error(), path) {
+		t.Fatalf("validateDatabaseURL() error = %v", err)
+	}
+}
+
+func TestProductionTCPRejectsSocketQueryOverride(t *testing.T) {
+	err := validateDatabaseURL(
+		"postgres://worker@db.example/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=verify-full",
+		ProfileProduction,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("validateDatabaseURL() error = %v", err)
 	}
 }
 

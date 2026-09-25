@@ -21,12 +21,17 @@ logs não redigidos. Revogue imediatamente qualquer credencial exposta.
 
 - O serviço deve operar atrás de TLS de entrada, rede privada para PostgreSQL, ACL na
   superfície operacional e egress firewall como defesa adicional.
+- No deploy EasyPanel de host único, o PostgreSQL não abre TCP e é acessado somente
+  pelo socket Unix declarado. Em topologias multi-host, TCP volta a exigir
+  `sslmode=verify-full`.
 - Produção exige keyrings e peppers distintos, externos ao banco, em arquivos `0600`.
 - Destinos produtivos são HTTPS e passam pelo cliente anti-SSRF; o Chaos Lab e HTTP
   loopback são recursos exclusivamente locais.
 - Payload, segredo, URL completa, headers e resposta externa não são observáveis.
 - O MVP não é um serviço SaaS certificado, não oferece HA/multi-região e não substitui
   secret manager, KMS/HSM, WAF ou monitoramento da infraestrutura.
+- A demonstração pública usa somente dados sintéticos; não é autorizada a receber
+  informação real, pessoal, financeira ou de clientes.
 
 O modelo de ameaças e os controles normativos estão em
 [`docs/webhook-delivery-engine-architecture.md`](docs/webhook-delivery-engine-architecture.md).

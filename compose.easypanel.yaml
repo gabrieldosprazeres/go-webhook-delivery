@@ -1,0 +1,329 @@
+name: webhook-delivery-engine
+
+x-app-security: &app-security
+  read_only: true
+  init: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+
+x-app-environment: &app-environment
+  WDE_PROFILE: production
+  WDE_VERSION: ${WDE_VERSION:-easypanel}
+  WDE_LOG_LEVEL: ${WDE_LOG_LEVEL:-info}
+  WDE_DATABASE_LOCAL_SOCKET: "true"
+  WDE_DATABASE_TIMEOUT: ${WDE_DATABASE_TIMEOUT:-5s}
+  WDE_SHUTDOWN_TIMEOUT: ${WDE_SHUTDOWN_TIMEOUT:-30s}
+  WDE_INGRESS_TLS_TERMINATED: "true"
+  WDE_ALLOW_HTTP_DESTINATIONS: "false"
+  WDE_OTEL_EXPORTER_OTLP_ENDPOINT: ${WDE_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  WDE_OTEL_EXPORT_TIMEOUT: ${WDE_OTEL_EXPORT_TIMEOUT:-5s}
+  WDE_OTEL_TRACE_SAMPLE_RATIO: ${WDE_OTEL_TRACE_SAMPLE_RATIO:-0.1}
+
+services:
+  secrets-init:
+    image: postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
+    network_mode: none
+    entrypoint: [bash, /scripts/materialize-secrets.sh]
+    secrets:
+      - migrator_pgpass
+      - api_pgpass
+      - worker_pgpass
+      - auth_pepper
+      - idempotency_pepper
+      - fingerprint_pepper
+      - rate_limit_pepper
+      - cursor_pepper
+      - payload_keyring
+      - signing_keyring
+    volumes:
+      - application-secrets:/materialized
+      - ./deployments/easypanel/materialize-secrets.sh:/scripts/materialize-secrets.sh:ro
+    cap_drop: [ALL]
+    # CHOWN assigns the final non-root owner; FOWNER permits chmod after that
+    # ownership transition inside coreutils install.
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64M
+          pids: 32
+    restart: "no"
+
+  postgres:
+    image: postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
+    network_mode: none
+    command: [postgres, -c, listen_addresses=, -c, password_encryption=scram-sha-256]
+    environment:
+      POSTGRES_DB: wde
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256 --auth-host=scram-sha-256
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets:
+      - source: postgres_password
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: migrator_pgpass
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: api_pgpass
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: worker_pgpass
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: admin_pgpass
+        uid: "999"
+        gid: "999"
+        mode: 0400
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-socket:/var/run/postgresql
+      - ./deployments/postgres/init-production-roles.sh:/docker-entrypoint-initdb.d/010-production-roles.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -h /var/run/postgresql -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    shm_size: 128mb
+    pids_limit: 256
+    security_opt: [no-new-privileges:true]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.70"
+          memory: 768M
+          pids: 256
+    restart: unless-stopped
+
+  migrate:
+    image: webhook-delivery-engine-migrate:${WDE_IMAGE_TAG:-easypanel}
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.migrate
+      args:
+        WDE_VERSION: ${WDE_VERSION:-easypanel}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: postgres://wde_migrator@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable
+      PGPASSFILE: /run/secrets/migrator_pgpass
+    command: [up]
+    volumes:
+      - postgres-socket:/var/run/postgresql:ro
+      - application-secrets:/run/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      secrets-init:
+        condition: service_completed_successfully
+    <<: *app-security
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: 192M
+          pids: 128
+    restart: "no"
+
+  api:
+    image: webhook-delivery-engine-api:${WDE_IMAGE_TAG:-easypanel}
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      target: runtime
+      args:
+        SERVICE: api
+        WDE_VERSION: ${WDE_VERSION:-easypanel}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
+    environment:
+      <<: *app-environment
+      WDE_API_HTTP_ADDR: :8080
+      WDE_API_OPERATIONAL_ADDR: :9090
+      WDE_DATABASE_URL: postgres://wde_api@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable&passfile=%2Frun%2Fsecrets%2Fapi_pgpass
+      WDE_AUTH_PEPPER_FILE: /run/secrets/auth_pepper
+      WDE_IDEMPOTENCY_PEPPER_FILE: /run/secrets/idempotency_pepper
+      WDE_FINGERPRINT_PEPPER_FILE: /run/secrets/fingerprint_pepper
+      WDE_RATE_LIMIT_PEPPER_FILE: /run/secrets/rate_limit_pepper
+      WDE_CURSOR_PEPPER_FILE: /run/secrets/cursor_pepper
+      WDE_PAYLOAD_KEYRING_FILE: /run/secrets/payload_keyring
+      WDE_SIGNING_KEYRING_FILE: /run/secrets/signing_keyring
+    volumes:
+      - postgres-socket:/var/run/postgresql:ro
+      - application-secrets:/run/secrets:ro
+    expose: ["8080"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    <<: *app-security
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
+    healthcheck:
+      test: [CMD, /service, healthcheck]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+          pids: 128
+    restart: unless-stopped
+
+  worker:
+    image: webhook-delivery-engine-worker:${WDE_IMAGE_TAG:-easypanel}
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      target: runtime
+      args:
+        SERVICE: worker
+        WDE_VERSION: ${WDE_VERSION:-easypanel}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
+    environment:
+      <<: *app-environment
+      WDE_DATABASE_URL: postgres://wde_worker@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable&passfile=%2Frun%2Fsecrets%2Fworker_pgpass
+      WDE_PAYLOAD_KEYRING_FILE: /run/secrets/payload_keyring
+      WDE_SIGNING_KEYRING_FILE: /run/secrets/signing_keyring
+      WDE_WORKER_OPERATIONAL_ADDR: :9091
+      WDE_WORKER_CONCURRENCY: ${WDE_WORKER_CONCURRENCY:-4}
+      WDE_WORKER_CLAIM_BATCH_SIZE: ${WDE_WORKER_CLAIM_BATCH_SIZE:-4}
+      WDE_WORKER_WORKSPACE_BATCH_LIMIT: ${WDE_WORKER_WORKSPACE_BATCH_LIMIT:-2}
+      WDE_WORKER_ENDPOINT_BATCH_LIMIT: ${WDE_WORKER_ENDPOINT_BATCH_LIMIT:-2}
+      WDE_WORKER_POLL_INTERVAL: ${WDE_WORKER_POLL_INTERVAL:-250ms}
+      WDE_WORKER_CLAIM_TIMEOUT: ${WDE_WORKER_CLAIM_TIMEOUT:-200ms}
+      WDE_WORKER_REQUEST_TIMEOUT: ${WDE_WORKER_REQUEST_TIMEOUT:-10s}
+      WDE_WORKER_LEASE_TTL: ${WDE_WORKER_LEASE_TTL:-30s}
+      WDE_WORKER_RETRY_BASE: ${WDE_WORKER_RETRY_BASE:-1s}
+      WDE_WORKER_RETRY_CAP: ${WDE_WORKER_RETRY_CAP:-15m}
+    volumes:
+      - postgres-socket:/var/run/postgresql:ro
+      - application-secrets:/run/secrets:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    <<: *app-security
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
+    healthcheck:
+      test: [CMD, /service, healthcheck]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.35"
+          memory: 384M
+          pids: 128
+    restart: unless-stopped
+
+  showcase:
+    image: webhook-delivery-engine-showcase:${WDE_IMAGE_TAG:-easypanel}
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      target: runtime
+      args:
+        SERVICE: showcase
+        WDE_VERSION: ${WDE_VERSION:-easypanel}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
+    environment:
+      WDE_SHOWCASE_HTTP_ADDR: :8080
+      WDE_SHOWCASE_API_URL: ${WDE_SHOWCASE_API_URL:?WDE_SHOWCASE_API_URL is required}
+      WDE_SHOWCASE_DOCS_URL: ${WDE_SHOWCASE_DOCS_URL:?WDE_SHOWCASE_DOCS_URL is required}
+      WDE_SHOWCASE_GITHUB_URL: ${WDE_SHOWCASE_GITHUB_URL:-https://github.com/gabrieldosprazeres/go-webhook-delivery}
+      WDE_SHOWCASE_RELEASE_URL: ${WDE_SHOWCASE_RELEASE_URL:-https://github.com/gabrieldosprazeres/go-webhook-delivery/releases}
+      WDE_SHOWCASE_LINKEDIN_URL: ${WDE_SHOWCASE_LINKEDIN_URL:-https://www.linkedin.com/in/gabrieldosprazeres}
+      WDE_VERSION: ${WDE_VERSION:-easypanel}
+    expose: ["8080"]
+    <<: *app-security
+    tmpfs:
+      - "/tmp:size=8m,mode=1777"
+    healthcheck:
+      test: [CMD, /service, healthcheck]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 3s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64M
+          pids: 128
+    restart: unless-stopped
+
+  swagger:
+    image: webhook-delivery-engine-swagger:${WDE_IMAGE_TAG:-easypanel}
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.docs
+      args:
+        WDE_VERSION: ${WDE_VERSION:-easypanel}
+        WDE_REVISION: ${WDE_REVISION:-unknown}
+    environment:
+      WDE_DOCS_HTTP_ADDR: :8080
+      WDE_DOCS_API_URL: ${WDE_DOCS_API_URL:?WDE_DOCS_API_URL is required}
+    expose: ["8080"]
+    <<: *app-security
+    tmpfs:
+      - "/tmp:size=8m,mode=1777"
+    healthcheck:
+      test: [CMD, /service, healthcheck]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 3s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 128M
+          pids: 128
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  postgres-socket:
+  application-secrets:
+
+secrets:
+  postgres_password:
+    environment: WDE_POSTGRES_SUPERUSER_PASSWORD
+  migrator_pgpass:
+    environment: WDE_MIGRATOR_PGPASS
+  api_pgpass:
+    environment: WDE_API_PGPASS
+  worker_pgpass:
+    environment: WDE_WORKER_PGPASS
+  admin_pgpass:
+    environment: WDE_ADMIN_PGPASS
+  auth_pepper:
+    environment: WDE_AUTH_PEPPER
+  idempotency_pepper:
+    environment: WDE_IDEMPOTENCY_PEPPER
+  fingerprint_pepper:
+    environment: WDE_FINGERPRINT_PEPPER
+  rate_limit_pepper:
+    environment: WDE_RATE_LIMIT_PEPPER
+  cursor_pepper:
+    environment: WDE_CURSOR_PEPPER
+  payload_keyring:
+    environment: WDE_PAYLOAD_KEYRING
+  signing_keyring:
+    environment: WDE_SIGNING_KEYRING

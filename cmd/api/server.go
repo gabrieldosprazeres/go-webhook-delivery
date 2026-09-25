@@ -143,6 +143,11 @@ type routesDependencies struct {
 
 func publicRoutes(optional ...routesDependencies) http.Handler {
 	mux := http.NewServeMux()
+	observability := telemetry.NewNoop()
+	if len(optional) == 1 && optional[0].telemetry != nil {
+		observability = optional[0].telemetry
+	}
+	mux.Handle("GET /{$}", observability.HTTP("/", http.HandlerFunc(apiIndex)))
 	if len(optional) == 1 {
 		deps := optional[0]
 		deps.route(mux, "POST /v1/endpoints", "/v1/endpoints", "endpoints:write", "endpoint_write", deps.quotas.EndpointWrite, http.HandlerFunc(deps.endpoints.Create))
@@ -153,12 +158,14 @@ func publicRoutes(optional ...routesDependencies) http.Handler {
 		deps.route(mux, "GET /v1/deliveries/{id}", "/v1/deliveries/{id}", "deliveries:read", "query", deps.quotas.Query, http.HandlerFunc(deps.deliveries.Get))
 		deps.route(mux, "POST /v1/deliveries/{id}/replays", "/v1/deliveries/{id}/replays", "deliveries:retry", "replay", deps.quotas.Replay, http.HandlerFunc(deps.deliveries.Replay))
 	}
-	observability := telemetry.NewNoop()
-	if len(optional) == 1 && optional[0].telemetry != nil {
-		observability = optional[0].telemetry
-	}
 	mux.Handle("/", observability.HTTP("unmatched", problem.NotFound()))
 	return problem.WithRequestID(problem.Recover(mux))
+}
+
+func apiIndex(response http.ResponseWriter, _ *http.Request) {
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	response.WriteHeader(http.StatusOK)
+	_, _ = response.Write([]byte("{\"service\":\"webhook-delivery-engine\",\"api_version\":\"v1\",\"status\":\"available\",\"authentication\":\"required\"}\n"))
 }
 
 func (deps routesDependencies) route(mux *http.ServeMux, pattern, route, scope, operation string,

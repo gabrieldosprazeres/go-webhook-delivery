@@ -11,7 +11,7 @@ COPY . .
 ARG SERVICE
 ARG TARGETOS=linux
 ARG TARGETARCH
-RUN test "${SERVICE}" = "api" || test "${SERVICE}" = "worker" || test "${SERVICE}" = "chaoslab"
+RUN test "${SERVICE}" = "api" || test "${SERVICE}" = "worker" || test "${SERVICE}" = "chaoslab" || test "${SERVICE}" = "showcase"
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
     go build -trimpath -ldflags="-s -w" -o /out/service "./cmd/${SERVICE}"
 RUN chmod 0555 /out/service

@@ -76,3 +76,12 @@ contra a base pinada. Conteúdo ou metadados alterados em path herdado, symlink
 redirecionado, tipo/modo/owner divergente, inventário extra, incompleto, duplicado,
 malformado ou com traversal falham fechados. A CI gera e anexa a evidência somente
 depois de testar as mesmas imagens.
+
+## Imagens de apresentação
+
+O deploy EasyPanel acrescenta `showcase` e `swagger`. Ambos executam um servidor Go
+distroless como non-root/read-only. O build de `swagger` copia somente os assets
+estáticos da imagem oficial Swagger UI pinada por tag e digest; Nginx e o entrypoint
+de terceiros não chegam ao runtime. A CI de produção gera CycloneDX/SPDX e bloqueia
+High/Critical nas duas imagens depois do smoke da topologia completa. Qualquer rebuild
+altera a evidência e exige novo scan antes do deploy.
