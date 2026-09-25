@@ -14,15 +14,24 @@ services:
     ports:
       - 127.0.0.1:14318:4318
       - 127.0.0.1:13133:13133
+    networks: [telemetry-private, smoke-host-access]
   prometheus:
     ports:
       - 127.0.0.1:19093:9090
+    networks: [telemetry-private, smoke-host-access]
   tempo:
     ports:
       - 127.0.0.1:13200:3200
+    networks: [telemetry-private, smoke-host-access]
   showcase:
     ports:
       - 127.0.0.1:18081:8080
   swagger:
     ports:
       - 127.0.0.1:18082:8080
+
+networks:
+  # CI-only bridge: Docker cannot publish loopback ports for containers that
+  # are connected exclusively to an internal network.
+  smoke-host-access:
+    internal: false

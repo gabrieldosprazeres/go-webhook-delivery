@@ -49,6 +49,17 @@ printf '%s' "$base_config" | jq -e '
   .services.grafana.ports[0].host_ip == "127.0.0.1"
 ' >/dev/null
 docker compose -p "$project" --env-file "$secrets" $compose_files config --quiet
+smoke_config=$(docker compose -p "$project" --env-file "$secrets" $compose_files config --format json)
+printf '%s' "$smoke_config" | jq -e '
+  . as $root |
+  (.networks["smoke-host-access"].internal // false) == false and
+  (["otel-collector", "prometheus", "tempo"] | all(. as $service |
+    ($root.services[$service].networks | has("telemetry-private")) and
+    ($root.services[$service].networks | has("smoke-host-access")))) and
+  ([.services | to_entries[] |
+    select(.value.networks != null and (.value.networks | has("smoke-host-access"))) | .key] |
+    sort) == ["otel-collector", "prometheus", "tempo"]
+' >/dev/null
 docker compose -p "$project" --env-file "$secrets" $compose_files up --build --detach --wait --wait-timeout 180
 
 echo "[smoke] API readiness"
