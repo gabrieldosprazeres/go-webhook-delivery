@@ -3,6 +3,23 @@
 Todas as mudanças relevantes deste projeto são documentadas neste arquivo a partir
 dos commits convencionais do repositório.
 
+## [1.0.1] — 2026-09-24
+
+### Corrigido
+
+- O scheduler do worker agora mantém o processo vivo durante indisponibilidades
+  transitórias do PostgreSQL, sinaliza indisponibilidade por readiness e retoma o
+  processamento com backoff sem reiniciar o container.
+- Panics em claim ou finalização continuam fatais, evitando mascarar defeitos de
+  programação; falhas operacionais do store possuem cobertura de regressão.
+
+### Infraestrutura
+
+- Actions oficiais de checkout, setup do Go e upload de artefatos atualizadas para
+  runtimes Node.js atuais, mantendo todas as referências pinadas por SHA imutável.
+- Pipeline público validado com unit tests, race detector, análise estática, scan de
+  segredos, matriz adversarial, perda do banco, fail-closed, SBOM e scan de imagens.
+
 ## [1.0.0] — 2026-09-24
 
 ### Adicionado
