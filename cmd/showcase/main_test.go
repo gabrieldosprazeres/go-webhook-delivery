@@ -39,6 +39,47 @@ func TestShowcaseRendersConfiguredLinksAndSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestShowcaseKeepsTerminalAlignedAndOpensExternalLinksInNewTab(t *testing.T) {
+	handler := routes(pageData{
+		APIURL:      "https://api.example.test",
+		DocsURL:     "https://docs.example.test",
+		GitHubURL:   "https://github.example.test/project",
+		ReleaseURL:  "https://github.example.test/project/releases/v1",
+		LinkedInURL: "https://linkedin.example.test/person",
+	})
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	body := response.Body.String()
+	if strings.Contains(body, "transform:rotate(") {
+		t.Fatal("terminal must not be rotated")
+	}
+	if count := strings.Count(body, `target="_blank"`); count != 7 {
+		t.Fatalf("external links with target=_blank=%d want=7", count)
+	}
+	for url, want := range map[string]int{
+		"https://api.example.test":                        1,
+		"https://docs.example.test":                       2,
+		"https://github.example.test/project":             2,
+		"https://github.example.test/project/releases/v1": 1,
+		"https://linkedin.example.test/person":            1,
+	} {
+		expected := `href="` + url + `" target="_blank" rel="noopener noreferrer"`
+		if count := strings.Count(body, expected); count != want {
+			t.Errorf("safe external links for %q=%d want=%d", url, count, want)
+		}
+	}
+	for _, anchor := range []string{
+		`<a href="#arquitetura">Arquitetura</a>`,
+		`<a href="#engenharia">Engenharia</a>`,
+	} {
+		if !strings.Contains(body, anchor) {
+			t.Errorf("internal link changed unexpectedly: %s", anchor)
+		}
+	}
+}
+
 func TestShowcaseLivenessAndNotFound(t *testing.T) {
 	handler := routes(pageData{})
 	for path, expected := range map[string]int{"/livez": http.StatusOK, "/missing": http.StatusNotFound} {
