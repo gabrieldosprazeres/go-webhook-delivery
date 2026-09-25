@@ -242,7 +242,12 @@ func TestNoopAndExporterFailureDoNotBreakMetrics(t *testing.T) {
 	if body := scrape(t, service.Metrics().Handler()); !strings.Contains(body, "wde_queue_ready 3") {
 		t.Fatalf("no-op service did not expose metrics: %s", body)
 	}
-	rejecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	requestPath := make(chan string, 1)
+	rejecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case requestPath <- r.URL.Path:
+		default:
+		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer rejecting.Close()
@@ -256,6 +261,14 @@ func TestNoopAndExporterFailureDoNotBreakMetrics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	_ = exported.Shutdown(ctx)
+	select {
+	case path := <-requestPath:
+		if path != "/v1/traces" {
+			t.Fatalf("OTLP trace path = %q", path)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("OTLP exporter did not send a request")
+	}
 }
 
 func scrape(t *testing.T, handler http.Handler) string {

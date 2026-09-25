@@ -47,19 +47,31 @@ printf '%s' "$base_config" | jq -e '
 docker compose -p "$project" --env-file "$secrets" $compose_files config --quiet
 docker compose -p "$project" --env-file "$secrets" $compose_files up --build --detach --wait --wait-timeout 180
 
+echo "[smoke] API readiness"
 curl --fail --silent --show-error --retry 12 --retry-delay 1 http://127.0.0.1:19090/readyz >/dev/null
+echo "[smoke] worker readiness"
 curl --fail --silent --show-error --retry 12 --retry-delay 1 http://127.0.0.1:19091/readyz >/dev/null
+echo "[smoke] console readiness"
 curl --fail --silent --show-error --retry 12 --retry-delay 1 http://127.0.0.1:19092/readyz >/dev/null
+echo "[smoke] showcase surface"
 curl --fail --silent --show-error http://127.0.0.1:18081/ | grep -q 'Webhooks que chegam'
+echo "[smoke] Swagger surface"
 curl --fail --silent --show-error http://127.0.0.1:18082/ | grep -q 'Swagger UI'
+echo "[smoke] console surface"
 curl --fail --silent --show-error http://127.0.0.1:18083/login | grep -q 'Conectar workspace'
+echo "[smoke] Grafana login"
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:13000/login)" = "200"
+echo "[smoke] collector readiness"
 curl --fail --silent --show-error --retry 12 --retry-delay 1 http://127.0.0.1:13133/ >/dev/null
+echo "[smoke] Prometheus readiness"
 curl --fail --silent --show-error --retry 12 --retry-delay 1 http://127.0.0.1:19093/-/ready >/dev/null
+echo "[smoke] Tempo readiness"
 curl --fail --silent --show-error --retry 12 --retry-delay 1 http://127.0.0.1:13200/ready >/dev/null
+echo "[smoke] API public boundary"
 curl --fail --silent --show-error http://127.0.0.1:18080/ | grep -q '"authentication":"required"'
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/livez)" = "404"
 test -z "$(docker compose -p "$project" --env-file "$secrets" $compose_files port postgres 5432 2>/dev/null || true)"
+echo "[smoke] materialized secret permissions"
 docker compose -p "$project" --env-file "$secrets" $compose_files run --rm --no-deps --entrypoint bash secrets-init -euc '
   count=0
   for path in /materialized/*; do
@@ -83,6 +95,7 @@ for container_id in "$api_id" "$worker_id" "$console_id" "$showcase_id" "$swagge
   test "$(docker inspect --format '{{.Config.User}}' "$container_id")" = "nonroot:nonroot"
   test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$container_id")" = "true"
 done
+echo "[smoke] container hardening"
 for service in otel-collector prometheus tempo grafana; do
   container_id=$(docker compose -p "$project" --env-file "$secrets" $compose_files ps -q "$service")
   user=$(docker inspect --format '{{.Config.User}}' "$container_id")
@@ -96,6 +109,7 @@ docker inspect --format '{{json .HostConfig.Tmpfs}}' "$tempo_id" |
   jq -e '.["/var/tempo"] | contains("size=268435456")' >/dev/null
 
 targets_ready=false
+echo "[smoke] Prometheus targets and rules"
 attempt=0
 while [ "$attempt" -lt 30 ]; do
   targets=$(curl --fail --silent --show-error --get --data-urlencode 'query=up' \
@@ -112,6 +126,7 @@ curl --fail --silent --show-error http://127.0.0.1:19093/api/v1/rules |
   jq -e '.data.groups[].rules[] | select(.name == "WDETempoDiscardingSpans" and .type == "alerting")' >/dev/null
 
 trace_id=0123456789abcdef0123456789abcdef
+echo "[smoke] OTLP to Tempo canary"
 start_ns=$(($(date +%s) * 1000000000))
 end_ns=$((start_ns + 1000000))
 curl --fail --silent --show-error -H 'Content-Type: application/json' \
@@ -132,6 +147,7 @@ test "$trace_found" = true
 set -a
 . "$secrets"
 set +a
+echo "[smoke] Grafana provisioning"
 grafana_auth="${WDE_GRAFANA_ADMIN_USER:-operator}:$WDE_GRAFANA_ADMIN_PASSWORD"
 curl --fail --silent --show-error --user "$grafana_auth" \
   http://127.0.0.1:13000/api/datasources/uid/prometheus | jq -e '.name == "Prometheus"' >/dev/null
