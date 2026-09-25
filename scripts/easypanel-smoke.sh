@@ -60,7 +60,17 @@ curl --fail --silent --show-error http://127.0.0.1:18082/ | grep -q 'Swagger UI'
 echo "[smoke] console surface"
 curl --fail --silent --show-error http://127.0.0.1:18083/login | grep -q 'Conectar workspace'
 echo "[smoke] Grafana login"
-test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:13000/login)" = "200"
+grafana_login_ready=false
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+  if [ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:13000/login)" = "200" ]; then
+    grafana_login_ready=true
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
+test "$grafana_login_ready" = true
 echo "[smoke] collector readiness"
 curl --fail --silent --show-error --retry 12 --retry-delay 1 http://127.0.0.1:13133/ >/dev/null
 echo "[smoke] Prometheus readiness"
@@ -150,11 +160,11 @@ set +a
 echo "[smoke] Grafana provisioning"
 grafana_auth="${WDE_GRAFANA_ADMIN_USER:-operator}:$WDE_GRAFANA_ADMIN_PASSWORD"
 curl --fail --silent --show-error --user "$grafana_auth" \
-  http://127.0.0.1:13000/api/datasources/uid/prometheus | jq -e '.name == "Prometheus"' >/dev/null
+  http://localhost:13000/api/datasources/uid/prometheus | jq -e '.name == "Prometheus"' >/dev/null
 curl --fail --silent --show-error --user "$grafana_auth" \
-  http://127.0.0.1:13000/api/datasources/uid/tempo | jq -e '.name == "Tempo"' >/dev/null
+  http://localhost:13000/api/datasources/uid/tempo | jq -e '.name == "Tempo"' >/dev/null
 test "$(curl --fail --silent --show-error --user "$grafana_auth" \
-  'http://127.0.0.1:13000/api/search?query=WDE' | jq 'length')" -ge 2
+  'http://localhost:13000/api/search?query=WDE' | jq 'length')" -ge 2
 unset grafana_auth WDE_GRAFANA_ADMIN_PASSWORD
 
 docker compose -p "$project" --env-file "$secrets" $compose_files stop grafana prometheus tempo otel-collector >/dev/null

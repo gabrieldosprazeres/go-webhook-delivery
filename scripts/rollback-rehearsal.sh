@@ -42,8 +42,16 @@ workspace_id=$(sed -n 's/.*"workspace_id": "\([^"]*\)".*/\1/p' "$work/credential
 api_key_id=$(sed -n 's/.*"api_key_id": "\([^"]*\)".*/\1/p' "$work/credential.json")
 compose exec -T -e PGPASSWORD=console-local-only postgres psql -h /var/run/postgresql \
 	-U wde_console -d wde -v ON_ERROR_STOP=1 -v workspace_id="$workspace_id" -v api_key_id="$api_key_id" \
-	-c "SELECT wde.create_console_session(gen_random_uuid(), :'workspace_id', :'api_key_id',
-	  '0123456789abcdef', decode(repeat('01',32),'hex'), gen_random_uuid())" >/dev/null
+	>/dev/null <<'SQL'
+SELECT wde.create_console_session(
+  gen_random_uuid(),
+  :'workspace_id',
+  :'api_key_id',
+  '0123456789abcdef',
+  decode(repeat('01', 32), 'hex'),
+  gen_random_uuid()
+);
+SQL
 before=$(compose exec -T postgres psql -U postgres -d wde -Atc \
 	"SELECT wde.schema_version() || '|' || count(*) FROM wde.workspaces GROUP BY wde.schema_version()")
 [ "$before" = "6|1" ] || { echo "rollback: fixture was not created" >&2; exit 1; }
