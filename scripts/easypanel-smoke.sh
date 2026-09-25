@@ -39,6 +39,10 @@ printf '%s' "$base_config" | jq -e '
   (.services.tempo.tmpfs | index("/var/tempo:size=256m,mode=0750,uid=10001,gid=10001")) != null and
   ([.services.tempo.volumes[]? | select(.target == "/var/tempo")] | length) == 0 and
   ([.services.prometheus.volumes[]? | select(.target == "/etc/prometheus/alerts.yaml" and .read_only == true)] | length) == 1 and
+  (.networks["grafana-host-access"].internal // false) == false and
+  (.services.grafana.networks | has("telemetry-private")) and
+  (.services.grafana.networks | has("grafana-host-access")) and
+  ([.services | to_entries[] | select(.value.networks != null and (.value.networks | has("grafana-host-access"))) | .key] == ["grafana"]) and
   (.services.grafana.ports | length) == 1 and
   .services.grafana.ports[0].target == 3000 and
   .services.grafana.ports[0].published == "13000" and

@@ -20,6 +20,7 @@ worker ------------------------------> destinos HTTPS públicos
 api + console + migrate -------------> PostgreSQL 17
 
 rede privada: OTel Collector, Prometheus, Tempo e listeners 9090/9091/9092
+bridge dedicada sem pares: Grafana --> bind 127.0.0.1:33000
 ```
 
 O arquivo implantado é [`compose.easypanel.yaml`](../compose.easypanel.yaml), separado
@@ -96,7 +97,10 @@ Não atribua domínio a `postgres`, `migrate`, `worker`, `otel-collector`, `prom
 Grafana em `127.0.0.1:33000`; loopback não aceita tráfego externo e não deve ser alterado
 para `0.0.0.0`. Ele não faz parte da demo para recrutadores.
 
-O operador acessa o Grafana somente pelo túnel SSH criptografado:
+Para que o Docker materialize esse bind, somente o Grafana participa também da bridge
+`grafana-host-access`, que não possui outros serviços. Pré-instalação e auto-update de
+plugins ficam desabilitadas. O operador acessa o Grafana somente pelo túnel SSH
+criptografado:
 
 ```bash
 ssh -N -L 33000:127.0.0.1:33000 <usuario-vps>@2.24.90.172

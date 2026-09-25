@@ -400,6 +400,8 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_USERS_ALLOW_ORG_CREATE: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
       GF_INSTALL_PLUGINS: ""
       GF_LOG_MODE: console
     volumes:
@@ -410,7 +412,7 @@ services:
     expose: ["3000"]
     ports:
       - 127.0.0.1:${WDE_GRAFANA_LOCAL_PORT:-33000}:3000
-    networks: [telemetry-private]
+    networks: [telemetry-private, grafana-host-access]
     depends_on:
       secrets-init:
         condition: service_completed_successfully
@@ -504,6 +506,10 @@ volumes:
 networks:
   telemetry-private:
     internal: true
+  # Required for Docker to publish Grafana on host loopback. Grafana is the
+  # only service attached to this dedicated bridge.
+  grafana-host-access:
+    internal: false
 
 secrets:
   postgres_password:

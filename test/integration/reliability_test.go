@@ -260,10 +260,12 @@ func TestPersistentFairnessWithConcurrentSingleSlotWorkers(t *testing.T) {
 	}
 	counts := map[uuid.UUID]int{}
 	seen := map[uuid.UUID]struct{}{}
-	for cycle := range 10 {
-		results := make(chan claimed, 4)
+	const targetClaims = 40
+	for round := 0; len(seen) < targetClaims && round < targetClaims; round++ {
+		workerCount := min(4, targetClaims-len(seen))
+		results := make(chan claimed, workerCount)
 		var group sync.WaitGroup
-		for range 4 {
+		for range workerCount {
 			group.Add(1)
 			go func() {
 				defer group.Done()
@@ -271,8 +273,17 @@ func TestPersistentFairnessWithConcurrentSingleSlotWorkers(t *testing.T) {
 				claims, err := store.ClaimBatch(ctx, delivery.ClaimRequest{
 					WorkerID: workerID, LeaseTTL: 20 * time.Second, Limit: 1, WorkspaceLimit: 1, EndpointLimit: 1,
 				})
-				if err != nil || len(claims) != 1 {
-					results <- claimed{err: fmt.Errorf("claims=%d: %w", len(claims), err)}
+				if err != nil {
+					results <- claimed{err: fmt.Errorf("claim batch: %w", err)}
+					return
+				}
+				if len(claims) == 0 {
+					// SKIP LOCKED may legitimately observe both workspaces locked by
+					// concurrent claim transactions. The next scheduler poll retries.
+					return
+				}
+				if len(claims) != 1 {
+					results <- claimed{err: fmt.Errorf("unexpected claims=%d", len(claims))}
 					return
 				}
 				results <- claimed{workerID: workerID, claim: claims[0]}
@@ -285,12 +296,15 @@ func TestPersistentFairnessWithConcurrentSingleSlotWorkers(t *testing.T) {
 				t.Fatal(result.err)
 			}
 			if _, duplicate := seen[result.claim.DeliveryID]; duplicate {
-				t.Fatalf("cycle=%d duplicate delivery=%s", cycle, result.claim.DeliveryID)
+				t.Fatalf("round=%d duplicate delivery=%s", round, result.claim.DeliveryID)
 			}
 			seen[result.claim.DeliveryID] = struct{}{}
 			counts[result.claim.WorkspaceID]++
 			finalizeClaims(t, ctx, store, result.workerID, []delivery.Claim{result.claim})
 		}
+	}
+	if len(seen) != targetClaims {
+		t.Fatalf("concurrent persistent fairness claimed=%d want=%d", len(seen), targetClaims)
 	}
 	difference := counts[first.workspaceID] - counts[second.workspaceID]
 	if difference < 0 {

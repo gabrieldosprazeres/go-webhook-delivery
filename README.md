@@ -136,7 +136,8 @@ O repositório inclui uma topologia produtiva separada em
 PostgreSQL, migration, worker, Collector, Prometheus, Tempo e portas operacionais não
 recebem domínio ou porta pública. Grafana é uma superfície exclusiva do operador,
 autenticada, ligada somente ao loopback do host e acessada por túnel SSH; ela permanece
-separada da demonstração para usuários. No host único,
+separada da demonstração para usuários. Uma bridge Docker dedicada sem outros serviços
+materializa esse bind de loopback sem colocar o Grafana na rede de ingress. No host único,
 API/worker/console/migrator acessam o PostgreSQL por um volume de
 socket Unix protegido; o banco usa SCRAM e não abre listener TCP. Segredos são
 montados como arquivos `0400` no UID do processo e nunca entram na imagem ou no Git.

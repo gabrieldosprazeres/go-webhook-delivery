@@ -87,7 +87,9 @@ PostgreSQL; a renderização e as invariantes estáticas do Compose foram aprova
 ## Condições operacionais
 
 1. Não criar domínio ou bind público para Grafana, Prometheus, Tempo, Collector ou
-   listeners `9090–9092`. Grafana é acessado por túnel SSH no loopback.
+   listeners `9090–9092`. Grafana é acessado por túnel SSH no loopback; uma bridge
+   dedicada sem pares permite ao Docker materializar esse bind sem conectar o Grafana
+   à rede de ingress. Pré-instalação e auto-update de plugins permanecem desabilitadas.
 2. Métricas do cliente vêm do PostgreSQL com RLS; nunca adicionar `workspace_id` aos
    labels do Prometheus.
 3. Não promover se o smoke EasyPanel, os targets Prometheus, o canário Tempo, os

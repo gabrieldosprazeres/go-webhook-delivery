@@ -43,6 +43,8 @@ dos commits convencionais do repositório.
   downgrade da migration serializa escritores concorrentes.
 - Dashboards do worker usam séries corretamente escopadas e links externos da vitrine
   abrem em nova página sem desalinhamento do terminal.
+- Bind privado do Grafana usa bridge dedicada sem pares para funcionar em versões
+  atuais do Docker, com pré-instalação e auto-update de plugins desabilitados.
 
 ### Validação
 

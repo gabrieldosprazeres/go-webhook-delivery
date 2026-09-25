@@ -10,11 +10,21 @@ API e worker já exportam Prometheus e OTLP, mas o deploy de demonstração não
 
 Provisionar Collector, Prometheus, Tempo e Grafana em `telemetry-private`, rede Docker com `internal: true`. Collector, Prometheus, Tempo e listeners `9090–9092` não publicam portas nem recebem domínio. Grafana permanece autenticado e acessível ao operador somente por loopback/túnel SSH.
 
+Como o Docker não publica de forma confiável portas de um container ligado somente a
+uma bridge `internal`, o Grafana também participa de `grafana-host-access`, uma bridge
+dedicada não interna sem qualquer outro serviço. Essa rede existe exclusivamente para
+materializar o bind `127.0.0.1:33000`; ela não coloca o Grafana na rede de ingress nem
+altera o escopo do bind. Pré-instalação e atualização automática de plugins ficam
+desabilitadas para reduzir egress e variabilidade de startup.
+
 O bind do Grafana é `127.0.0.1:33000`; ele não participa da rede de ingress do
 EasyPanel. O navegador usa `http://localhost:33000` sobre o túnel SSH, por isso o cookie
 do Grafana não usa `Secure`, mas conserva `HttpOnly` do próprio Grafana e
 `SameSite=Strict`. Essa exceção não autoriza HTTP ou cookies sem `Secure` em qualquer
 hostname público.
+
+O smoke de produção prova que somente o Grafana participa de `grafana-host-access` e
+que a porta publicada responde no loopback esperado.
 
 OTLP/HTTP sem TLS é aceito em produção apenas quando `WDE_OTEL_ALLOW_PRIVATE_HTTP=true` e o endpoint é exatamente `http://otel-collector:4318`. Qualquer outro HTTP continua fail-closed. Ao mover o Collector para outro host, HTTPS/mTLS volta a ser obrigatório.
 
