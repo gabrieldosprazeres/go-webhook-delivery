@@ -117,6 +117,7 @@ services:
       GOOSE_DRIVER: postgres
       GOOSE_DBSTRING: postgres://wde_migrator@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable
       PGPASSFILE: /run/secrets/migrator_pgpass
+    command: [up]
     volumes:
       - postgres-socket:/var/run/postgresql:ro
       - application-secrets:/run/secrets:ro
