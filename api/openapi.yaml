@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Webhook Delivery Engine API
-  version: 0.5.0
+  version: 1.0.0
   description: |-
     Reliable at-least-once webhook delivery. Event acceptance is not delivery success.
     Consumers verify HMAC v1 within a five-minute window and deduplicate using WDE-Delivery-ID.

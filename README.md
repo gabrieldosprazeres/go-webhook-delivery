@@ -1,29 +1,59 @@
 # Webhook Delivery Engine
 
-Servico de entrega confiavel de webhooks escrito em Go. O projeto demonstra ingestao idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento multi-tenant, assinatura HMAC, defesa SSRF e operacao observavel.
+[![CI](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](api/openapi.yaml)
+[![Release](https://img.shields.io/badge/release-v1.0.0-blue)](CHANGELOG.md)
+
+Serviço de entrega confiável de webhooks escrito em Go. O projeto demonstra ingestão
+idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento
+multi-tenant, assinatura HMAC, defesa SSRF e operação observável.
 
 > Estado atual: `v1.0.0` concluída e validada localmente. Code Review, QA, auditoria
 > OWASP, matriz adversarial, rollback, smoke de containers, SBOM e scans passaram sem
 > ressalvas bloqueadoras. O projeto nunca promete `exactly-once`.
 
+## Problema e arquitetura
+
+Enviar um `POST` não significa que um webhook foi entregue. O destinatário pode estar
+indisponível, responder com rate limit ou processar o evento sem que a resposta chegue
+ao remetente. Este engine persiste o trabalho antes de responder `202 Accepted`,
+registra cada tentativa e oferece retry, dead-letter e replay com histórico íntegro.
+
+```mermaid
+flowchart LR
+    Client[Produtor] -->|API key + evento| API[API Go]
+    API -->|transação atômica| PG[(PostgreSQL 17)]
+    PG -->|claim SKIP LOCKED| Worker[Workers Go]
+    Worker -->|HTTPS + HMAC| Consumer[Consumidor]
+    Consumer -->|sucesso / falha / 429| Worker
+    Worker -->|attempt, retry ou DLQ| PG
+    API -. métricas e traces .-> Obs[Prometheus / OpenTelemetry]
+    Worker -. métricas e traces .-> Obs
+```
+
+O PostgreSQL atua como fonte de verdade e fila durável. API e worker são binários
+separados e podem escalar independentemente, mas permanecem no mesmo monólito modular
+enquanto não existir evidência operacional que justifique novos serviços.
+
 ## Stack
 
 - Go 1.27.1, `net/http` e `log/slog`;
-- PostgreSQL 17 como fonte de verdade e fila duravel;
-- Goose para migrations explicitas;
+- PostgreSQL 17 como fonte de verdade e fila durável;
+- Goose para migrations explícitas;
 - Prometheus e OpenTelemetry OTLP/HTTP para observabilidade;
 - `go test`, race detector, vet, Staticcheck e `govulncheck`;
 - Docker Compose para o ambiente local.
 
-As ferramentas Go ficam pinadas no `go.mod` e sao executadas com `go tool`.
+As ferramentas Go ficam pinadas no `go.mod` e são executadas com `go tool`.
 
-## Pre-requisitos
+## Pré-requisitos
 
 - Go 1.27.1;
 - Docker 29+ com Docker Compose;
 - GNU Make e `rg` (ripgrep).
 
-## Inicio rapido
+## Início rápido
 
 A jornada reproduzível completa cria um PostgreSQL efêmero isolado, compila os três binários e demonstra bootstrap, HMAC, rotação com assinatura dupla, replay, retry, DLQ e métricas. Em uma máquina com os pré-requisitos, ela termina em menos de 10 minutos e remove credenciais/processos/volume ao sair:
 
@@ -57,11 +87,15 @@ docker compose --profile demo up --build
 curl -i http://127.0.0.1:8081/livez
 ```
 
-Todos os ports publicados pelo Compose fazem bind em loopback. As credenciais presentes em `.env.example` sao exclusivamente locais e descartaveis. O Chaos Lab em container serve para inspeção direta; a demo ponta a ponta usa binários locais porque a política SSRF bloqueia corretamente endereços privados da bridge Docker.
+Todas as portas publicadas pelo Compose são vinculadas à interface loopback. As
+credenciais presentes em `.env.example` são exclusivamente locais e descartáveis. O
+Chaos Lab em container serve para inspeção direta; a demo ponta a ponta usa binários
+locais porque a política SSRF bloqueia corretamente endereços privados da bridge
+Docker.
 
 Os listeners operacionais usam loopback por padrão. Se um orquestrador exigir bind não-loopback, `/livez`, `/readyz` e `/metrics` devem permanecer em rede privada com ACL/NetworkPolicy explícita, sem ingress público; o processo não implementa autenticação nessa superfície.
 
-Antes da primeira chamada, crie o workspace e a API key com o comando one-shot (ele nao inicia listener e revela a chave uma unica vez):
+Antes da primeira chamada, crie o workspace e a API key com o comando one-shot (ele não inicia listener e revela a chave uma única vez):
 
 ```bash
 WDE_PROFILE=local \
@@ -73,7 +107,7 @@ go run ./cmd/api credentials bootstrap --name 'Demo local' \
 
 O arquivo criado contém `api_key`. O [quickstart detalhado](docs/quickstart.md) traz os exemplos curl para endpoint, evento, consulta, replay, rotação e métricas; o contrato completo está em [`api/openapi.yaml`](api/openapi.yaml). Produção aceita somente destinos HTTPS; HTTP é permitido apenas em loopback nos profiles local/test com a flag explícita.
 
-## Execucao sem containers
+## Execução sem containers
 
 ```bash
 export WDE_PROFILE=local
@@ -81,19 +115,19 @@ export WDE_DATABASE_URL='postgres://wde_api:api-local-only@127.0.0.1:5432/wde?ss
 go run ./cmd/api
 ```
 
-O worker usa a credencial `wde_worker`. O Chaos Lab nao recebe DSN e falha no startup se for iniciado com profile `production`.
-Por padrao, o Chaos Lab escuta somente em `127.0.0.1:8081`; no container local o Compose faz override do listener e publica o port exclusivamente em loopback.
+O worker usa a credencial `wde_worker`. O Chaos Lab não recebe DSN e falha no startup se for iniciado com profile `production`.
+Por padrão, o Chaos Lab escuta somente em `127.0.0.1:8081`; no container local o Compose faz override do listener e publica o port exclusivamente em loopback.
 
-## Configuracao
+## Configuração
 
-Variaveis nao secretas podem ser substituidas por flags homonimas, como `--profile`, `--http-addr`, `--log-level` e `--shutdown-timeout`. Segredos e DSNs nao possuem flag para evitar exposicao no historico/process list.
+Variáveis não secretas podem ser substituídas por flags homônimas, como `--profile`, `--http-addr`, `--log-level` e `--shutdown-timeout`. Segredos e DSNs não possuem flag para evitar exposição no histórico/process list.
 
-Principais variaveis:
+Principais variáveis:
 
-| Variavel | Uso |
+| Variável | Uso |
 |---|---|
 | `WDE_PROFILE` | `local`, `test` ou `production` |
-| `WDE_DATABASE_URL` | DSN da role especifica do processo |
+| `WDE_DATABASE_URL` | DSN da role específica do processo |
 | `WDE_ADMIN_DATABASE_URL` | DSN usada exclusivamente pelos comandos one-shot de credenciais |
 | `WDE_DATABASE_TIMEOUT` | prazo para startup/readiness do banco; default `5s` |
 | `WDE_OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint OTLP/HTTP opcional; vazio mantém traces no-op |
@@ -107,32 +141,38 @@ Principais variaveis:
 | `WDE_OTEL_EXPORT_TIMEOUT` | orçamento do export/flush, obrigatório entre `100ms` e `10s`; default `5s` |
 | `WDE_OTEL_TRACE_SAMPLE_RATIO` | razão local finita entre `0` e `1`; default `0.1`, nunca herdada do bit sampled remoto |
 | `WDE_EDGE_{MAX_IN_FLIGHT,GLOBAL,ORIGIN,PREFIX,WINDOW,MAX_BUCKETS}` | semáforo e limiter local bounded antes do lookup de credencial |
-| `WDE_QUOTA_<OPERACAO>_{GLOBAL,WORKSPACE,API_KEY}` | limites persistentes por janela para ingestao, escrita de endpoint, consulta e replay |
+| `WDE_QUOTA_<OPERACAO>_{GLOBAL,WORKSPACE,API_KEY}` | limites persistentes por janela para ingestão, escrita de endpoint, consulta e replay |
 | `WDE_QUOTA_REPLAY_RESOURCE` | limite de replay por delivery na janela; default `2/min` |
-| `WDE_QUOTA_<OPERACAO>_WINDOW` | janela fixa PostgreSQL da quota (`1s` para ingestao; `1m` para as demais) |
-| `WDE_WORKER_CONCURRENCY` | jobs HTTP simultaneos; default `8` |
-| `WDE_WORKER_CLAIM_BATCH_SIZE` | claims por ciclo, sempre menor ou igual a concorrencia; default `8` |
+| `WDE_QUOTA_<OPERACAO>_WINDOW` | janela fixa PostgreSQL da quota (`1s` para ingestão; `1m` para as demais) |
+| `WDE_WORKER_CONCURRENCY` | jobs HTTP simultâneos; default `8` |
+| `WDE_WORKER_CLAIM_BATCH_SIZE` | claims por ciclo, sempre menor ou igual à concorrência; default `8` |
 | `WDE_WORKER_WORKSPACE_BATCH_LIMIT` | teto de claims por workspace em um batch; default `2` |
 | `WDE_WORKER_ENDPOINT_BATCH_LIMIT` | teto de claims por endpoint em um batch; default `2` |
-| `WDE_WORKER_POLL_INTERVAL` | base do backoff com jitter quando a fila esta vazia; default `250ms` |
+| `WDE_WORKER_POLL_INTERVAL` | base do backoff com jitter quando a fila está vazia; default `250ms` |
 | `WDE_WORKER_CLAIM_TIMEOUT` | deadline de cada acesso de claim ao banco; default `200ms`, sempre menor ou igual ao poll e ao lease |
-| `WDE_WORKER_REQUEST_TIMEOUT` | timeout HTTP total; default `10s`, maximo `20s` |
-| `WDE_WORKER_LEASE_TTL` | validade do lease; default `30s` e margem minima de `10s` sobre o timeout |
+| `WDE_WORKER_REQUEST_TIMEOUT` | timeout HTTP total; default `10s`, máximo `20s` |
+| `WDE_WORKER_LEASE_TTL` | validade do lease; default `30s` e margem mínima de `10s` sobre o timeout |
 | `WDE_WORKER_RETRY_BASE` / `WDE_WORKER_RETRY_CAP` | janela exponencial com full jitter; defaults `1s` / `15m` |
 | `WDE_SHUTDOWN_TIMEOUT` | prazo de shutdown; default `30s` |
 | `WDE_LOG_LEVEL` | `debug`, `info`, `warn` ou `error` |
-| `WDE_INGRESS_TLS_TERMINATED` | declaracao obrigatoria para API em producao |
-| `WDE_*_FILE` | paths de peppers e keyrings montados em producao; rate limit e cursor usam peppers independentes |
+| `WDE_INGRESS_TLS_TERMINATED` | declaração obrigatória para API em produção |
+| `WDE_*_FILE` | paths de peppers e keyrings montados em produção; rate limit e cursor usam peppers independentes |
 
-No profile `production`, o startup falha se o PostgreSQL nao usar `sslmode=verify-full`, TLS de entrada nao estiver declarado, profiling/HTTP externo estiver habilitado ou os secret files estiverem ausentes, forem symlinks, tiverem permissoes acima de `0600` ou pertencerem a outro UID.
+No profile `production`, o startup falha se o PostgreSQL não usar `sslmode=verify-full`, TLS de entrada não estiver declarado, profiling/HTTP externo estiver habilitado ou os secret files estiverem ausentes, forem symlinks, tiverem permissões acima de `0600` ou pertencerem a outro UID.
 
 O scheduler nunca reserva mais que os slots livres. Uma sequence monotônica, sem row lock global, alimenta cursores persistidos por workspace e endpoint inclusive entre batches unitários e workers concorrentes. Workspace, endpoint runtime e delivery usam locks locais com `SKIP LOCKED`, portanto um tenant travado não impede progresso independente. Cada claim possui deadline de banco explícito. Polling vazio usa backoff exponencial com jitter para evitar sincronização entre instâncias. Um lease expirado abandona a tentativa antiga e incrementa o fencing token antes de novo envio. Resultados com owner/token vencidos afetam zero linhas.
 
 Antes do lookup de credencial, cada instância aplica semáforo global e limiter fixed-window por volume global, origem observada no socket e prefixo apenas sintático. A memória usa LRU com cardinalidade máxima, identificadores HMAC e ignora headers de origem enviados pelo cliente. Depois da autenticação, a quota persistente roda antes da autorização por escopo.
 
-Quotas autenticadas usam buckets PostgreSQL em uma unica transacao para dimensoes global, workspace, API key e, no replay, delivery. O relogio da janela e `transaction_timestamp()`, portanto todas as dimensoes da mesma requisicao compartilham o mesmo boundary. Reiniciar ou multiplicar instancias nao zera contadores; buckets expirados sao removidos em lotes limitados. Identificadores de dimensao incluem versão, operação, janela e tenant/recurso no HMAC com pepper exclusivo e nunca viram labels de métrica.
+Quotas autenticadas usam buckets PostgreSQL em uma única transação para dimensões
+global, workspace, API key e, no replay, delivery. O relógio da janela é
+`transaction_timestamp()`, portanto todas as dimensões da mesma requisição compartilham
+o mesmo boundary. Reiniciar ou multiplicar instâncias não zera contadores; buckets
+expirados são removidos em lotes limitados. Identificadores de dimensão incluem versão,
+operação, janela e tenant/recurso no HMAC com pepper exclusivo e nunca viram labels de
+métrica.
 
-`POST /v1/deliveries/{id}/replays` exige `deliveries:retry`, motivo, `Idempotency-Key` e quota. Um replay valido cria novo `run_number`, zera somente o contador do run e preserva `attempt_sequence`, fencing e historico. Comandos concorrentes identicos retornam o mesmo comando; conteudo divergente gera `409`; payload expurgado falha fechado. Comando, transicao e auditoria confirmam ou revertem juntos.
+`POST /v1/deliveries/{id}/replays` exige `deliveries:retry`, motivo, `Idempotency-Key` e quota. Um replay válido cria novo `run_number`, zera somente o contador do run e preserva `attempt_sequence`, fencing e histórico. Comandos concorrentes idênticos retornam o mesmo comando; conteúdo divergente gera `409`; payload expurgado falha fechado. Comando, transição e auditoria confirmam ou revertem juntos.
 
 `POST /v1/endpoints/{id}/secret-rotations` exige `endpoints:write` e `Idempotency-Key`. A nova chave fica `active` e a anterior `retiring`; durante a janela de 1 hora a 7 dias cada tentativa carrega as duas assinaturas no header `WDE-Signature`. Uma nova rotação é recusada enquanto houver overlap ativo. Depois da janela, o worker purga somente o envelope antigo; hash e fingerprint do comando sobrevivem por `metadata_retention_days`. Um retry idêntico cujo segredo já foi purgado retorna `409 rotation_result_expired`, e conteúdo divergente continua retornando conflito sem nova rotação.
 
@@ -154,9 +194,16 @@ A quarentena revoga todas as API keys e HMAC secrets restauradas, suspende works
 
 Cursores de listagem são binários, versionados, vinculados ao workspace e autenticados com HMAC. Alteração de qualquer byte ou uso em outro tenant retorna `400 invalid_page` sem revelar dados.
 
-Timeouts, erros de rede, `408`, `425`, `429` e `5xx` recebem retry. Redirects, os demais `4xx` e status fora de `100..599` sao falhas permanentes. O atraso usa full jitter exponencial; `Retry-After` so e aceito quando valido e dentro do teto, caso contrario a politica padrao prevalece. A ultima falha transitoria termina em `dead_letter`, preservando todas as tentativas. Em `SIGINT`/`SIGTERM`, o worker para novos claims, drena jobs, cancela os restantes antes do fim e retorna no deadline absoluto de no maximo 30 segundos mesmo diante de dependencia nao cooperativa.
+Timeouts, erros de rede, `408`, `425`, `429` e `5xx` recebem retry. Redirects, os
+demais `4xx` e status fora de `100..599` são falhas permanentes. O atraso usa full
+jitter exponencial; `Retry-After` só é aceito quando válido e dentro do teto, caso
+contrário a política padrão prevalece. A última falha transitória termina em
+`dead_letter`, preservando todas as tentativas. Em `SIGINT`/`SIGTERM`, o worker para
+novos claims, drena jobs, cancela os restantes antes do fim e retorna no deadline
+absoluto de no máximo 30 segundos mesmo diante de dependência não cooperativa.
 
-Peppers produtivos usam uma linha `v1:<base64url-sem-padding>` com exatamente 32 bytes aleatorios. Keyrings usam JSON versionado, tambem com chaves de exatamente 32 bytes:
+Peppers produtivos usam uma linha `v1:<base64url-sem-padding>` com exatamente 32 bytes
+aleatórios. Keyrings usam JSON versionado, também com chaves de exatamente 32 bytes:
 
 ```json
 {
@@ -233,11 +280,11 @@ scripts/             demonstração local efêmera
 db/migrations/       migrations versionadas e fail-closed
 deployments/         Dockerfiles e bootstrap local do PostgreSQL
 api/                 contrato OpenAPI
-test/                suites de integracao e adversariais
-docs/                PRD, arquitetura, ADRs, seguranca, backlog e status
+test/                suites de integração e adversariais
+docs/                PRD, arquitetura, ADRs, segurança, backlog e status
 ```
 
-## Decisoes e seguranca
+## Decisões e segurança
 
 - [Changelog da v1.0.0](CHANGELOG.md)
 - [Arquitetura](docs/webhook-delivery-engine-architecture.md)
@@ -253,4 +300,4 @@ docs/                PRD, arquitetura, ADRs, seguranca, backlog e status
 - [Supply chain e imagens](docs/supply-chain.md)
 - [Checklist de release](docs/release-checklist.md)
 
-Payloads, API keys, HMAC secrets, assinaturas, headers, URLs completas, DSNs e corpos externos nunca devem entrar em logs, traces, metricas ou erros. O logger da fundacao aplica uma allowlist de atributos e possui teste canario contra vazamento.
+Payloads, API keys, HMAC secrets, assinaturas, headers, URLs completas, DSNs e corpos externos nunca devem entrar em logs, traces, métricas ou erros. O logger da fundação aplica uma allowlist de atributos e possui teste canário contra vazamento.
