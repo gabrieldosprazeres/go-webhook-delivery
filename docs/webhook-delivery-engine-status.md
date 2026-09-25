@@ -418,18 +418,19 @@ Sprint 5 aprovada em Code Review e QA, apta para commit e integração em `main`
 - Relatórios finais: `docs/webhook-delivery-engine-qa-sprint-6.md` e
   `docs/webhook-delivery-engine-security-audit.md`.
 
-### Próximo gate
+### Gate encerrado do MVP base
 
-MVP concluído e release local `v1.0.0` validada. Publicação em registry ou repositório
-remoto permanece uma ação separada, pois este checkout não possui remote configurado.
+O MVP local foi concluído e validado na release `v1.0.0`. A evolução produtiva descrita
+abaixo configurou o remote público, integrou as mudanças em `main`, publicou as releases
+posteriores e colocou a demonstração em produção na VPS pessoal.
 
 ## Evolução pós-MVP — demonstração produtiva no EasyPanel
 
 - ✅ Compose produtivo separado, landing page em pt-BR e Swagger navegável.
 - ✅ PostgreSQL isolado sem TCP, com socket Unix, SCRAM e secrets `0400`.
 - ✅ Gerador de segredos e smoke de CI da topologia completa.
-- ✅ Gates completos, revisão de segurança, commits incrementais e pull request público.
-- ✅ Pull request integrado a `main`, tag `v1.1.0` publicada e deploy concluído na
+- ✅ Gates completos, revisão de segurança, commits incrementais e pull requests públicos.
+- ✅ Pull requests integrados a `main`, tag `v1.2.0` publicada e deploy concluído na
   VPS pessoal pelo EasyPanel.
 - ✅ CI de `main` aprovada em oito jobs, incluindo testes, race detector,
   `govulncheck`, Gitleaks, Compose adversarial, SBOM/Trivy e smoke da topologia
@@ -437,11 +438,16 @@ remoto permanece uma ação separada, pois este checkout não possui remote conf
 - ✅ DNS e TLS válidos para a
   [vitrine](https://webhooks.gabrieldosprazeres.com.br),
   [documentação](https://docs.webhooks.gabrieldosprazeres.com.br) e
-  [API](https://api.webhooks.gabrieldosprazeres.com.br).
-- ✅ Runtime verificado: API e worker `v1.1.0` iniciados em produção, retenção sem
-  degradação, PostgreSQL privado e migrations Goose aplicadas até a versão 20.
+  [API](https://api.webhooks.gabrieldosprazeres.com.br), além do
+  [console autenticado](https://console.webhooks.gabrieldosprazeres.com.br).
+- ✅ Runtime verificado: API, worker e console `v1.2.0` iniciados em produção,
+  retenção sem degradação, PostgreSQL privado e migrations Goose aplicadas até a
+  versão 21, com schema lógico v6.
+- ✅ Observabilidade operacional privada com OpenTelemetry Collector, Prometheus,
+  Tempo e Grafana provisionados; Grafana acessível somente por túnel SSH no loopback
+  do host e demais componentes sem ingress público.
 - ✅ Probes operacionais permanecem privadas (`404` externamente), rotas `/v1/*`
-  exigem autenticação e as três superfícies públicas apresentam TLS válido.
+  exigem autenticação e as quatro superfícies públicas apresentam TLS válido.
 
 O escopo é uma demonstração de portfólio com dados sintéticos, não uma oferta
 SaaS. A decisão de host único está em `ADR-011` e o procedimento em
