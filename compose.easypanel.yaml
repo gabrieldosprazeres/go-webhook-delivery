@@ -40,7 +40,9 @@ services:
       - application-secrets:/materialized
       - ./deployments/easypanel/materialize-secrets.sh:/scripts/materialize-secrets.sh:ro
     cap_drop: [ALL]
-    cap_add: [CHOWN]
+    # CHOWN assigns the final non-root owner; FOWNER permits chmod after that
+    # ownership transition inside coreutils install.
+    cap_add: [CHOWN, FOWNER]
     security_opt: [no-new-privileges:true]
     pids_limit: 32
     deploy:
