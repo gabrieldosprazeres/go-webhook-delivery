@@ -246,6 +246,10 @@ RESET ROLE;
 SET lock_timeout='5s';
 SET statement_timeout='30s';
 SET ROLE wde_owner;
+-- Serialize the fail-closed guard with every session/audit writer. Without
+-- these locks, a row could commit after the EXISTS check and before the table
+-- and v6 constraints are removed.
+LOCK TABLE wde.console_sessions,wde.audit_events IN SHARE ROW EXCLUSIVE MODE;
 DO $guard$
 BEGIN
     IF EXISTS(SELECT 1 FROM wde.console_sessions) OR EXISTS(
