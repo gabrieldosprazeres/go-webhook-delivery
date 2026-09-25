@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "playwright test"
+    "test": "node --test artifact-sanitizer.test.mjs && node run-playwright.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",

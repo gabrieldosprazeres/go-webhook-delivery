@@ -20,7 +20,9 @@ export default defineConfig({
     baseURL,
     locale: 'pt-BR',
     colorScheme: 'dark',
-    screenshot: 'only-on-failure',
+    // A login failure could otherwise capture the password input as pixels.
+    // Successful evidence is attached explicitly only after navigation to /app.
+    screenshot: 'off',
     trace: 'off',
     video: 'off',
   },
