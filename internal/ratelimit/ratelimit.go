@@ -43,6 +43,15 @@ type exceededError struct{ retryAfter int }
 func (e exceededError) Error() string { return ErrExceeded.Error() }
 func (e exceededError) Unwrap() error { return ErrExceeded }
 
+// RetryAfter returns the bounded retry delay carried by a quota error.
+func RetryAfter(err error) (int, bool) {
+	var exceeded exceededError
+	if !errors.As(err, &exceeded) {
+		return 0, false
+	}
+	return exceeded.retryAfter, true
+}
+
 func New(pool *pgxpool.Pool, pepper [32]byte) *Limiter {
 	return &Limiter{pool: pool, pepper: pepper}
 }

@@ -5,6 +5,7 @@ umask 077
 [ -n "${WDE_TEST_API_DATABASE_URL:-}" ] || { echo "adversarial: WDE_TEST_API_DATABASE_URL is required" >&2; exit 64; }
 [ -n "${WDE_TEST_WORKER_DATABASE_URL:-}" ] || { echo "adversarial: WDE_TEST_WORKER_DATABASE_URL is required" >&2; exit 64; }
 [ -n "${WDE_TEST_ADMIN_DATABASE_URL:-}" ] || { echo "adversarial: WDE_TEST_ADMIN_DATABASE_URL is required" >&2; exit 64; }
+[ -n "${WDE_TEST_CONSOLE_DATABASE_URL:-}" ] || { echo "adversarial: WDE_TEST_CONSOLE_DATABASE_URL is required" >&2; exit 64; }
 [ -n "${WDE_TEST_SUPERUSER_DATABASE_URL:-}" ] || { echo "adversarial: WDE_TEST_SUPERUSER_DATABASE_URL is required" >&2; exit 64; }
 
 report=$(mktemp "${TMPDIR:-/tmp}/wde-adversarial.XXXXXX")

@@ -29,6 +29,7 @@ type Service string
 const (
 	ServiceAPI      Service = "api"
 	ServiceWorker   Service = "worker"
+	ServiceConsole  Service = "console"
 	ServiceChaosLab Service = "chaoslab"
 )
 
@@ -60,6 +61,7 @@ type Config struct {
 	Edge                  EdgeConfig
 	Quotas                QuotaConfig
 	Telemetry             TelemetryConfig
+	Console               ConsoleConfig
 	Secrets               SecretFiles
 }
 
@@ -70,6 +72,8 @@ type SecretFiles struct {
 	FingerprintPepper string
 	RateLimitPepper   string
 	CursorPepper      string
+	SessionPepper     string
+	CSRFPepper        string
 	PayloadKeyring    string
 	SigningKeyring    string
 }
@@ -111,6 +115,9 @@ func defaults(service Service) (Config, error) {
 	switch service {
 	case ServiceAPI:
 		cfg.HTTPAddr, cfg.OperationalAddr = ":8080", "127.0.0.1:9090"
+	case ServiceConsole:
+		cfg.HTTPAddr, cfg.OperationalAddr = ":8082", "127.0.0.1:9092"
+		cfg.Console = defaultConsoleConfig()
 	case ServiceChaosLab:
 		cfg.HTTPAddr = "127.0.0.1:8081"
 	case ServiceWorker:

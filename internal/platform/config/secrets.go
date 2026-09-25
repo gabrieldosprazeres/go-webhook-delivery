@@ -21,6 +21,8 @@ func applySecretPaths(cfg *Config, lookup func(string) (string, bool)) {
 	cfg.Secrets.FingerprintPepper, _ = envValue(lookup, "WDE_FINGERPRINT_PEPPER_FILE")
 	cfg.Secrets.RateLimitPepper, _ = envValue(lookup, "WDE_RATE_LIMIT_PEPPER_FILE")
 	cfg.Secrets.CursorPepper, _ = envValue(lookup, "WDE_CURSOR_PEPPER_FILE")
+	cfg.Secrets.SessionPepper, _ = envValue(lookup, "WDE_CONSOLE_SESSION_PEPPER_FILE")
+	cfg.Secrets.CSRFPepper, _ = envValue(lookup, "WDE_CONSOLE_CSRF_PEPPER_FILE")
 	cfg.Secrets.PayloadKeyring, _ = envValue(lookup, "WDE_PAYLOAD_KEYRING_FILE")
 	cfg.Secrets.SigningKeyring, _ = envValue(lookup, "WDE_SIGNING_KEYRING_FILE")
 }
@@ -28,6 +30,11 @@ func applySecretPaths(cfg *Config, lookup func(string) (string, bool)) {
 func validateProductionSecrets(cfg Config) error {
 	if cfg.Service == ServiceAPI {
 		if err := validateAPIPeppers(cfg.Secrets); err != nil {
+			return err
+		}
+	}
+	if cfg.Service == ServiceConsole {
+		if err := validateConsolePeppers(cfg.Secrets); err != nil {
 			return err
 		}
 	}
@@ -43,6 +50,39 @@ func validateProductionSecrets(cfg Config) error {
 		if _, reused := signingKeys[material]; reused {
 			return errors.New("config: payload and signing keyrings must use distinct key material")
 		}
+	}
+	return nil
+}
+
+func validateConsolePeppers(files SecretFiles) error {
+	if err := validateAPIPeppers(files); err != nil {
+		return err
+	}
+	session, err := validatePepperFile("WDE_CONSOLE_SESSION_PEPPER_FILE", files.SessionPepper)
+	if err != nil {
+		return err
+	}
+	csrf, err := validatePepperFile("WDE_CONSOLE_CSRF_PEPPER_FILE", files.CSRFPepper)
+	if err != nil {
+		return err
+	}
+	base := make(map[[keyMaterialBytes]byte]struct{}, 7)
+	for _, path := range []string{files.AuthPepper, files.IdempotencyPepper, files.FingerprintPepper,
+		files.RateLimitPepper, files.CursorPepper} {
+		material, readErr := validatePepperFile("console pepper", path)
+		if readErr != nil {
+			return readErr
+		}
+		base[material] = struct{}{}
+	}
+	if session == csrf {
+		return errors.New("config: console session and CSRF peppers must be distinct")
+	}
+	if _, reused := base[session]; reused {
+		return errors.New("config: console session pepper must be distinct")
+	}
+	if _, reused := base[csrf]; reused {
+		return errors.New("config: console CSRF pepper must be distinct")
 	}
 	return nil
 }

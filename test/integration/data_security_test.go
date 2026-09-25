@@ -693,13 +693,17 @@ func TestRestoreQuarantineRevokesSnapshotBeforeReadiness(t *testing.T) {
 		t.Fatalf("key=%s workspace=%s restore=%s endpoint=%s secret=%s cleared=%v audits=%d",
 			keyStatus, workspaceStatus, restoreState, endpointStatus, secretState, secretCleared, quarantineAudits)
 	}
-	if err := database.Check(ctx, boundaryAPI, database.RoleAPI); !errors.Is(err, database.ErrUnavailable) {
+	if err := database.Check(ctx, boundaryAPI, database.RoleAPI); !errors.Is(err, database.ErrUnavailable) &&
+		!errors.Is(err, database.ErrIncompatibleSchema) {
 		t.Fatalf("quarantined readiness err=%v", err)
 	}
 	record, found, err := auth.NewPostgresLookup(boundaryAPI).LookupKey(ctx, "restore012345678")
 	if err != nil || !found || record.Status != "revoked" {
 		t.Fatalf("found=%v status=%s err=%v", found, record.Status, err)
 	}
+	// A backup from schema v5 remains quarantined until the restored database is
+	// migrated to the current v6 binary contract.
+	runGooseBoundary(t, ctx, root, boundarySuperURL, "up-to", 21)
 	if changed, err = retention.NewAdminStore(boundaryAdmin).CompleteRestore(ctx, 1); err != nil || !changed {
 		t.Fatalf("reconcile changed=%v err=%v", changed, err)
 	}

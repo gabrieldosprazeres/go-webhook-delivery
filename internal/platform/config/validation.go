@@ -52,6 +52,9 @@ func (cfg Config) validateCommon() error {
 	if err := cfg.validateTelemetry(); err != nil {
 		return err
 	}
+	if err := cfg.validateConsole(); err != nil {
+		return err
+	}
 	return cfg.validateAddresses()
 }
 
@@ -89,13 +92,13 @@ func (cfg Config) validateWorker() error {
 }
 
 func (cfg Config) validateAddresses() error {
-	if (cfg.Service == ServiceAPI || cfg.Service == ServiceChaosLab) && strings.TrimSpace(cfg.HTTPAddr) == "" {
+	if (cfg.Service == ServiceAPI || cfg.Service == ServiceConsole || cfg.Service == ServiceChaosLab) && strings.TrimSpace(cfg.HTTPAddr) == "" {
 		return errors.New("config: HTTP listen address must not be empty")
 	}
-	if (cfg.Service == ServiceAPI || cfg.Service == ServiceWorker) && strings.TrimSpace(cfg.OperationalAddr) == "" {
+	if (cfg.Service == ServiceAPI || cfg.Service == ServiceWorker || cfg.Service == ServiceConsole) && strings.TrimSpace(cfg.OperationalAddr) == "" {
 		return errors.New("config: operational HTTP listen address must not be empty")
 	}
-	if cfg.Service == ServiceAPI || cfg.Service == ServiceWorker {
+	if cfg.Service == ServiceAPI || cfg.Service == ServiceWorker || cfg.Service == ServiceConsole {
 		return validateDatabaseURL(cfg.DatabaseURL, cfg.Profile, cfg.DatabaseLocalSocket)
 	}
 	return nil
@@ -105,7 +108,7 @@ func (cfg Config) validateProduction() error {
 	if cfg.Service == ServiceChaosLab {
 		return errors.New("config: chaoslab is unavailable in production")
 	}
-	if cfg.Service == ServiceAPI && !cfg.IngressTLSTerminated {
+	if (cfg.Service == ServiceAPI || cfg.Service == ServiceConsole) && !cfg.IngressTLSTerminated {
 		return errors.New("config: WDE_INGRESS_TLS_TERMINATED must be true in production")
 	}
 	if cfg.EnablePprof {

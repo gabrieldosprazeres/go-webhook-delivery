@@ -54,6 +54,49 @@ func TestProductionRequiresHTTPSOTLP(t *testing.T) {
 	}
 }
 
+func TestProductionAllowsOnlyExplicitPrivateHTTPCollector(t *testing.T) {
+	valid := Config{Profile: ProfileProduction, Telemetry: TelemetryConfig{
+		OTLPEndpoint: "http://otel-collector:4318", ExportTimeout: time.Second,
+		TraceSampleRatio: 0.1, AllowPrivateHTTP: true,
+	}}
+	if err := valid.validateTelemetry(); err != nil {
+		t.Fatalf("private collector rejected: %v", err)
+	}
+	for _, endpoint := range []string{"http://otel-collector:4318/v1/traces", "http://other:4318"} {
+		invalid := valid
+		invalid.Telemetry.OTLPEndpoint = endpoint
+		if err := invalid.validateTelemetry(); err == nil {
+			t.Fatalf("unsafe private endpoint accepted: %s", endpoint)
+		}
+	}
+	withoutOptIn := valid
+	withoutOptIn.Telemetry.AllowPrivateHTTP = false
+	if err := withoutOptIn.validateTelemetry(); err == nil {
+		t.Fatal("private HTTP collector accepted without opt-in")
+	}
+}
+
+func TestConsoleConfigurationUsesFixedSessionPolicyAndExactOrigin(t *testing.T) {
+	valid := Config{Service: ServiceConsole, Profile: ProfileProduction,
+		Console: ConsoleConfig{Origin: "https://console.example.test", SessionIdle: 15 * time.Minute,
+			SessionAbsolute: time.Hour}}
+	if err := valid.validateConsole(); err != nil {
+		t.Fatalf("valid console config rejected: %v", err)
+	}
+	for _, origin := range []string{"http://console.example.test", "https://console.example.test/path", "https://user@console.example.test"} {
+		invalid := valid
+		invalid.Console.Origin = origin
+		if err := invalid.validateConsole(); err == nil {
+			t.Fatalf("invalid origin accepted: %s", origin)
+		}
+	}
+	invalidPolicy := valid
+	invalidPolicy.Console.SessionIdle = 30 * time.Minute
+	if err := invalidPolicy.validateConsole(); err == nil {
+		t.Fatal("mutable console session policy accepted")
+	}
+}
+
 func TestAPIGlobalShutdownBudgetIsCappedAtThirtySeconds(t *testing.T) {
 	_, err := Load(LoadOptions{Service: ServiceAPI, LookupEnv: mapLookup(map[string]string{
 		"WDE_DATABASE_URL":     "postgres://test:test@localhost:5432/wde?sslmode=disable",

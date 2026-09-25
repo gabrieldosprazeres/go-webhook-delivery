@@ -28,22 +28,28 @@ compose up --detach --wait postgres >/dev/null
 goose status >/dev/null
 goose up >/dev/null
 
-echo "[2/7] empty boundary supports reviewed down/up"
-goose down-to 19 >/dev/null
+echo "[2/7] empty console boundary supports reviewed down/up"
+goose down-to 20 >/dev/null
 [ "$(compose exec -T postgres psql -U postgres -d wde -Atc \
-	'SELECT max(version_id) FROM goose_db_version WHERE is_applied')" = 19 ]
+	'SELECT max(version_id) FROM goose_db_version WHERE is_applied')" = 20 ]
 goose up >/dev/null
 
-echo "[3/7] create representative v5 data"
+echo "[3/7] create representative v6 data and browser session"
 WDE_PROFILE=local WDE_ADMIN_DATABASE_URL="$admin" WDE_DATABASE_URL="$api" \
 	go run ./cmd/api credentials bootstrap --name "Rollback rehearsal" \
 	--output-file="$work/credential.json"
+workspace_id=$(sed -n 's/.*"workspace_id": "\([^"]*\)".*/\1/p' "$work/credential.json")
+api_key_id=$(sed -n 's/.*"api_key_id": "\([^"]*\)".*/\1/p' "$work/credential.json")
+compose exec -T -e PGPASSWORD=console-local-only postgres psql -h /var/run/postgresql \
+	-U wde_console -d wde -v ON_ERROR_STOP=1 -v workspace_id="$workspace_id" -v api_key_id="$api_key_id" \
+	-c "SELECT wde.create_console_session(gen_random_uuid(), :'workspace_id', :'api_key_id',
+	  '0123456789abcdef', decode(repeat('01',32),'hex'), gen_random_uuid())" >/dev/null
 before=$(compose exec -T postgres psql -U postgres -d wde -Atc \
 	"SELECT wde.schema_version() || '|' || count(*) FROM wde.workspaces GROUP BY wde.schema_version()")
-[ "$before" = "5|1" ] || { echo "rollback: fixture was not created" >&2; exit 1; }
+[ "$before" = "6|1" ] || { echo "rollback: fixture was not created" >&2; exit 1; }
 
-echo "[4/7] migration guard must fail atomically on live v5 data"
-if goose down-to 19 >"$work/down.log" 2>&1; then
+echo "[4/7] migration guard must fail atomically on live v6 session data"
+if goose down-to 20 >"$work/down.log" 2>&1; then
 	echo "rollback: unsafe downgrade unexpectedly succeeded" >&2
 	exit 1
 fi
@@ -51,7 +57,7 @@ physical=$(compose exec -T postgres psql -U postgres -d wde -Atc \
 	"SELECT max(version_id) FROM goose_db_version WHERE is_applied")
 after=$(compose exec -T postgres psql -U postgres -d wde -Atc \
 	"SELECT wde.schema_version() || '|' || count(*) FROM wde.workspaces GROUP BY wde.schema_version()")
-[ "$physical" = 20 ] && [ "$after" = "$before" ] || {
+[ "$physical" = 21 ] && [ "$after" = "$before" ] || {
 	echo "rollback: failed downgrade did not preserve the guarded boundary" >&2
 	exit 1
 }
@@ -63,14 +69,14 @@ if WDE_MIGRATOR_DATABASE_URL="$migrator" WDE_ROLLBACK_TARGET=0 \
 	exit 1
 fi
 
-echo "[6/7] global quarantine and concurrent writer probes preserve boundary 20"
+echo "[6/7] queue-metrics guard still preserves its independent boundary 20"
 WDE_TEST_SUPERUSER_DATABASE_URL="postgres://postgres:postgres-local-only@127.0.0.1:$port/wde?sslmode=disable" \
 	go test ./test/integration -run '^TestQueueMetricsDowngradeGuardIsAtomicAndSerialized$' -count=1
 
 echo "[7/7] status and no-op forward recovery remain healthy"
 goose status >/dev/null
 goose up >/dev/null
-[ "$(compose exec -T postgres psql -U postgres -d wde -Atc 'SELECT wde.schema_version()')" = 5 ]
+[ "$(compose exec -T postgres psql -U postgres -d wde -Atc 'SELECT wde.schema_version()')" = 6 ]
 [ "$(compose exec -T postgres psql -U postgres -d wde -Atc \
 	'SELECT count(*) FROM wde.workspaces')" = 1 ]
-echo "Rollback rehearsal complete: empty down/up passed; live, global and racing state stayed at 20."
+echo "Rollback rehearsal complete: empty down/up passed; live console state stayed at 21 and queue guards stayed intact."

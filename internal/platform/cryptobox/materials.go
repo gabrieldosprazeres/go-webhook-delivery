@@ -22,6 +22,8 @@ type Materials struct {
 	FingerprintPepper [32]byte
 	RateLimitPepper   [32]byte
 	CursorPepper      [32]byte
+	SessionPepper     [32]byte
+	CSRFPepper        [32]byte
 	Payload           Keyring
 	Signing           Keyring
 }
@@ -69,6 +71,7 @@ func Load(profile config.Profile, files config.SecretFiles) (Materials, error) {
 
 func readPeppers(files config.SecretFiles) (Materials, error) {
 	var result Materials
+	var err error
 	if files.AuthPepper == "" && files.IdempotencyPepper == "" && files.FingerprintPepper == "" &&
 		files.RateLimitPepper == "" && files.CursorPepper == "" {
 		return result, nil
@@ -84,6 +87,18 @@ func readPeppers(files config.SecretFiles) (Materials, error) {
 		}
 		*targets[index] = pepper
 	}
+	if files.SessionPepper != "" {
+		result.SessionPepper, err = readPepper(files.SessionPepper)
+		if err != nil {
+			return Materials{}, err
+		}
+	}
+	if files.CSRFPepper != "" {
+		result.CSRFPepper, err = readPepper(files.CSRFPepper)
+		if err != nil {
+			return Materials{}, err
+		}
+	}
 	return result, nil
 }
 
@@ -93,6 +108,8 @@ func developmentMaterials() Materials {
 		AuthPepper: key("auth"), IdempotencyPepper: key("idempotency"), FingerprintPepper: key("fingerprint"),
 		RateLimitPepper: key("rate-limit"),
 		CursorPepper:    key("cursor"),
+		SessionPepper:   key("console-session"),
+		CSRFPepper:      key("console-csrf"),
 		Payload:         Keyring{Primary: 1, Keys: map[int16][32]byte{1: key("payload-kek")}},
 		Signing:         Keyring{Primary: 1, Keys: map[int16][32]byte{1: key("signing-kek")}},
 	}
