@@ -97,7 +97,23 @@ curl --fail --silent --show-error --retry 12 --retry-delay 1 http://127.0.0.1:13
 echo "[smoke] Prometheus readiness"
 curl --fail --silent --show-error --retry 12 --retry-delay 1 http://127.0.0.1:19093/-/ready >/dev/null
 echo "[smoke] Tempo readiness"
-curl --fail --silent --show-error --retry 12 --retry-delay 1 http://127.0.0.1:13200/ready >/dev/null
+tempo_ready=false
+tempo_status=000
+attempt=0
+while [ "$attempt" -lt 60 ]; do
+  tempo_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    http://127.0.0.1:13200/ready || true)
+  if [ "$tempo_status" = "200" ]; then
+    tempo_ready=true
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
+if [ "$tempo_ready" != true ]; then
+  echo "smoke: Tempo did not become ready (last HTTP status: $tempo_status)" >&2
+  exit 1
+fi
 echo "[smoke] API public boundary"
 curl --fail --silent --show-error http://127.0.0.1:18080/ | grep -q '"authentication":"required"'
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/livez)" = "404"
