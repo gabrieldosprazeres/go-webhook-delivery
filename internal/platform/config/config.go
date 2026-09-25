@@ -41,6 +41,7 @@ type Config struct {
 	HTTPAddr              string
 	OperationalAddr       string
 	DatabaseURL           string
+	DatabaseLocalSocket   bool
 	DatabaseTimeout       time.Duration
 	ShutdownTimeout       time.Duration
 	IngressTLSTerminated  bool

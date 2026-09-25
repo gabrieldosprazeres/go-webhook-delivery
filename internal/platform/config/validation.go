@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const productionDatabaseSocket = "/var/run/postgresql"
+
 // Validate applies process- and profile-specific fail-closed rules.
 func (cfg Config) Validate() error {
 	if err := cfg.validateCommon(); err != nil {
@@ -94,7 +96,7 @@ func (cfg Config) validateAddresses() error {
 		return errors.New("config: operational HTTP listen address must not be empty")
 	}
 	if cfg.Service == ServiceAPI || cfg.Service == ServiceWorker {
-		return validateDatabaseURL(cfg.DatabaseURL, cfg.Profile)
+		return validateDatabaseURL(cfg.DatabaseURL, cfg.Profile, cfg.DatabaseLocalSocket)
 	}
 	return nil
 }
@@ -115,15 +117,33 @@ func (cfg Config) validateProduction() error {
 	return validateProductionSecrets(cfg)
 }
 
-func validateDatabaseURL(raw string, profile Profile) error {
+func validateDatabaseURL(raw string, profile Profile, localSocket bool) error {
 	if strings.TrimSpace(raw) == "" {
 		return errors.New("config: WDE_DATABASE_URL is required")
 	}
 	parsed, err := url.Parse(raw)
-	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.Host == "" {
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") ||
+		parsed.User == nil || parsed.User.Username() == "" || parsed.Path != "/wde" || parsed.Fragment != "" {
 		return errors.New("config: WDE_DATABASE_URL is invalid")
 	}
-	if profile == ProfileProduction && parsed.Query().Get("sslmode") != "verify-full" {
+	query := parsed.Query()
+	if _, hasPassword := parsed.User.Password(); profile == ProfileProduction && hasPassword {
+		return errors.New("config: WDE_DATABASE_URL must not contain a password in production")
+	}
+	if localSocket {
+		if parsed.Host != "" || len(query["host"]) != 1 || query.Get("host") != productionDatabaseSocket ||
+			len(query["sslmode"]) != 1 || query.Get("sslmode") != "disable" || len(query["passfile"]) != 1 {
+			return errors.New("config: local PostgreSQL must use the declared Unix socket")
+		}
+		if _, err := validateSecretPath("database passfile", query.Get("passfile")); err != nil {
+			return err
+		}
+		return nil
+	}
+	if parsed.Host == "" || len(query["host"]) != 0 {
+		return errors.New("config: WDE_DATABASE_URL is invalid")
+	}
+	if profile == ProfileProduction && (len(query["sslmode"]) != 1 || query.Get("sslmode") != "verify-full") {
 		return errors.New("config: WDE_DATABASE_URL must use sslmode=verify-full in production")
 	}
 	return nil
