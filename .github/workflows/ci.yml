@@ -174,7 +174,7 @@ jobs:
           }
           trap cleanup EXIT INT TERM
           docker compose --profile core run --name "$bootstrap_container" --no-deps \
-            -e WDE_DATABASE_URL="postgres://wde_admin:${WDE_ADMIN_DATABASE_PASSWORD:-admin-local-only}@postgres:5432/wde?sslmode=disable" api \
+            -e WDE_ADMIN_DATABASE_URL="postgres://wde_admin:${WDE_ADMIN_DATABASE_PASSWORD:-admin-local-only}@postgres:5432/wde?sslmode=disable" api \
             credentials bootstrap --name "Browser smoke" --output-file=/tmp/credential.json
           docker cp "$bootstrap_container:/tmp/credential.json" "$credential_dir/credential.json"
           chmod 0600 "$credential_dir/credential.json"
