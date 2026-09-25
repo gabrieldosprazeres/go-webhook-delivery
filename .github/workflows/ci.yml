@@ -177,13 +177,16 @@ jobs:
           bootstrap_container="wde-browser-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           cleanup() {
             docker rm --force "$bootstrap_container" >/dev/null 2>&1 || true
-            rm -rf "$credential_dir"
+            find "$credential_dir" -depth -delete
           }
           trap cleanup EXIT INT TERM
-          docker compose --profile core run --name "$bootstrap_container" --no-deps \
+          sudo chown 65532:65532 "$credential_dir"
+          docker compose --profile core run --rm --name "$bootstrap_container" --no-deps \
+            --volume "$credential_dir:/credential" \
             -e WDE_ADMIN_DATABASE_URL="postgres://wde_admin:${WDE_ADMIN_DATABASE_PASSWORD:-admin-local-only}@postgres:5432/wde?sslmode=disable" api \
-            credentials bootstrap --name "Browser smoke" --output-file=/tmp/credential.json
-          docker cp "$bootstrap_container:/tmp/credential.json" "$credential_dir/credential.json"
+            credentials bootstrap --name "Browser smoke" --output-file=/credential/credential.json
+          sudo chown "$(id -u):$(id -g)" "$credential_dir" "$credential_dir/credential.json"
+          chmod 0700 "$credential_dir"
           chmod 0600 "$credential_dir/credential.json"
           WDE_BROWSER_BASE_URL=http://127.0.0.1:8082 \
             WDE_BROWSER_CREDENTIAL_FILE="$credential_dir/credential.json" \
