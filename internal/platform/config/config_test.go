@@ -264,6 +264,11 @@ func TestProductionDatabaseSocketRejectsInsecurePassfile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("localhost:5432:wde:wde_worker:test"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// WriteFile applies the process umask; force the intentionally insecure
+	// precondition so this test is deterministic under the adversarial 0077 umask.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	databaseURL := "postgres://worker@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable&passfile=" + url.QueryEscape(path)
 	err := validateDatabaseURL(databaseURL, ProfileProduction, true)
 	if err == nil || !strings.Contains(err.Error(), "permissions") || strings.Contains(err.Error(), path) {
