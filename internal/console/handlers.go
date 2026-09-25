@@ -65,10 +65,10 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Solicitação inválida.", http.StatusBadRequest)
 		return
 	}
-	if !s.consumeQuota(w, r, session, uuid.Nil, s.deps.EndpointPolicy) {
+	if err := s.deps.Sessions.Logout(r.Context(), session); err != nil {
+		http.Error(w, "Não foi possível encerrar a sessão agora.", http.StatusServiceUnavailable)
 		return
 	}
-	_ = s.deps.Sessions.Logout(r.Context(), session)
 	s.clearSessionCookie(w)
 	w.Header().Set("Clear-Site-Data", `"cache", "cookies", "storage"`)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)

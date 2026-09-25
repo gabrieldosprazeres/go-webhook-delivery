@@ -3,10 +3,43 @@ package ratelimit
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestLoginMiddlewareUsesFormCredentialPrefix(t *testing.T) {
+	limiter := NewEdge(EdgePolicy{MaxInFlight: 2, Global: 10, Origin: 10, Prefix: 1,
+		MaxBuckets: 10, Window: time.Minute}, [32]byte{1})
+	handler := limiter.LoginMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("api_key") == "" {
+			t.Fatal("parsed login form was not preserved for the handler")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	token := "wde_test_0000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	request := func(value string) *httptest.ResponseRecorder {
+		form := url.Values{"api_key": {value}}
+		r := httptest.NewRequest(http.MethodPost, "http://console.test/session", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.RemoteAddr = "192.0.2.10:1234"
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	if response := request(token); response.Code != http.StatusNoContent {
+		t.Fatalf("first status=%d", response.Code)
+	}
+	if response := request(token); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("same prefix status=%d", response.Code)
+	}
+	other := "wde_test_1111111111111111_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if response := request(other); response.Code != http.StatusNoContent {
+		t.Fatalf("independent prefix status=%d", response.Code)
+	}
+}
 
 func TestEdgeLimiterBoundsAnonymousOriginAndCardinality(t *testing.T) {
 	limiter := NewEdge(EdgePolicy{

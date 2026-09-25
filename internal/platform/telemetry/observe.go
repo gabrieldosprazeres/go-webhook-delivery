@@ -12,7 +12,7 @@ var allowedCategories = map[string]struct{}{
 
 var allowedPurgeCategories = map[string]struct{}{
 	"payload": {}, "secret": {}, "attempt": {}, "replay": {}, "rotation": {},
-	"delivery": {}, "event": {}, "audit": {}, "bucket": {}, "workspace": {},
+	"delivery": {}, "event": {}, "audit": {}, "bucket": {}, "session": {}, "workspace": {},
 }
 
 func boundedCategory(category string) string {

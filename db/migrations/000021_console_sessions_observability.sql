@@ -49,10 +49,13 @@ CREATE TABLE wde.console_sessions(
 CREATE INDEX console_sessions_key_active_idx ON wde.console_sessions(workspace_id,api_key_id,created_at,id)
     WHERE status='active';
 CREATE INDEX console_sessions_expiry_idx ON wde.console_sessions(idle_expires_at,id) WHERE status='active';
+CREATE INDEX console_sessions_revoked_purge_idx ON wde.console_sessions(revoked_at,id) WHERE status='revoked';
 CREATE INDEX endpoints_workspace_console_idx ON wde.endpoints(workspace_id,created_at DESC,id DESC);
 CREATE INDEX events_workspace_metrics_idx ON wde.events(workspace_id,created_at);
 CREATE INDEX delivery_attempts_workspace_metrics_idx ON wde.delivery_attempts(workspace_id,finished_at)
     INCLUDE(outcome,duration_ms) WHERE finished_at IS NOT NULL;
+CREATE INDEX deliveries_workspace_active_queue_idx ON wde.deliveries(workspace_id,next_attempt_at,id)
+    INCLUDE(status) WHERE status IN('pending','processing','retry_scheduled');
 
 ALTER TABLE wde.console_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wde.console_sessions FORCE ROW LEVEL SECURITY;
@@ -81,7 +84,7 @@ CREATE POLICY console_session_scopes ON wde.api_key_scopes FOR SELECT TO wde_con
 CREATE POLICY console_session_workspaces ON wde.workspaces FOR SELECT TO wde_console_session_executor USING(true);
 CREATE POLICY console_session_audit ON wde.audit_events FOR INSERT TO wde_console_session_executor WITH CHECK(true);
 
-GRANT SELECT,INSERT,UPDATE ON wde.console_sessions TO wde_console_session_executor;
+GRANT SELECT,INSERT,UPDATE,DELETE ON wde.console_sessions TO wde_console_session_executor;
 GRANT SELECT ON wde.workspaces,wde.api_keys,wde.api_key_scopes,wde.restore_control TO wde_console_session_executor;
 GRANT INSERT ON wde.audit_events TO wde_console_session_executor;
 GRANT SELECT ON wde.workspaces,wde.delivery_attempts,wde.replay_commands TO wde_console;
@@ -199,9 +202,11 @@ CREATE FUNCTION wde.purge_console_sessions(p_batch integer)
 RETURNS integer LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 SET search_path=pg_catalog SET statement_timeout='5s'
 AS $function$
-DECLARE v_count integer;
+DECLARE v_count integer; v_updated integer;
 BEGIN
-    IF p_batch<1 OR p_batch>1000 THEN RAISE EXCEPTION 'console_session_invalid'; END IF;
+    IF p_batch IS NULL OR p_batch NOT BETWEEN 1 AND 1000 THEN
+        RAISE EXCEPTION 'console_session_invalid';
+    END IF;
     UPDATE wde.console_sessions SET status='revoked',revoked_at=clock_timestamp(),
         revoke_reason='expired',updated_at=clock_timestamp()
       WHERE id IN(
@@ -211,13 +216,14 @@ BEGIN
          ORDER BY LEAST(idle_expires_at,absolute_expires_at),id
          LIMIT p_batch FOR UPDATE SKIP LOCKED
       );
+    GET DIAGNOSTICS v_updated=ROW_COUNT;
     WITH candidates AS(
       SELECT id FROM wde.console_sessions
        WHERE status='revoked' AND revoked_at<statement_timestamp()-interval '30 days'
-       ORDER BY revoked_at,id LIMIT p_batch FOR UPDATE SKIP LOCKED
+       ORDER BY revoked_at,id LIMIT (p_batch-v_updated) FOR UPDATE SKIP LOCKED
     ) DELETE FROM wde.console_sessions s USING candidates c WHERE s.id=c.id;
     GET DIAGNOSTICS v_count=ROW_COUNT;
-    RETURN v_count;
+    RETURN v_updated+v_count;
 END
 $function$;
 
@@ -286,6 +292,7 @@ DROP POLICY console_subscriptions ON wde.endpoint_subscriptions;
 DROP POLICY console_endpoints ON wde.endpoints;
 DROP POLICY console_workspaces ON wde.workspaces;
 DROP TABLE wde.console_sessions;
+DROP INDEX wde.deliveries_workspace_active_queue_idx;
 DROP INDEX wde.delivery_attempts_workspace_metrics_idx;
 DROP INDEX wde.events_workspace_metrics_idx;
 DROP INDEX wde.endpoints_workspace_console_idx;

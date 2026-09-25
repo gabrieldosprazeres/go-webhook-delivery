@@ -138,6 +138,18 @@ func TestEveryProductionRouteEnforcesCredentialScopeAndTenant(t *testing.T) {
 	server := httptest.NewServer(newPublicServer(pipelineConfig(t,
 		os.Getenv("WDE_TEST_API_DATABASE_URL")), api, materials).Handler)
 	defer server.Close()
+	t.Run("browser session cookie is never API authentication", func(t *testing.T) {
+		request, err := http.NewRequest(http.MethodGet, server.URL+"/v1/deliveries", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.AddCookie(&http.Cookie{Name: "__Host-wde_session", Value: "wds_fake"})
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertPipelineStatus(t, response, http.StatusUnauthorized, "unauthorized")
+	})
 	randomID := uuid.New().String()
 	tests := []struct {
 		name, path, body, key, wrongToken string

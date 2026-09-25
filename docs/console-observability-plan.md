@@ -1,7 +1,7 @@
 # Console Web e Observabilidade — plano de entrega
 
 **Status:** Implementação concluída; gates finais e deploy em execução
-**Versão:** 1.0  
+**Versão:** 1.0
 **Data:** 2026-09-25
 
 ## Resultado do primeiro release

@@ -391,7 +391,9 @@ services:
       GF_SECURITY_ADMIN_USER: ${WDE_GRAFANA_ADMIN_USER:-operator}
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_SERVER_ROOT_URL: ${WDE_GRAFANA_ROOT_URL:?WDE_GRAFANA_ROOT_URL is required}
-      GF_SECURITY_COOKIE_SECURE: "true"
+      # Grafana is reached only through an encrypted SSH tunnel terminating on
+      # host loopback, so the browser endpoint itself is http://localhost.
+      GF_SECURITY_COOKIE_SECURE: "false"
       GF_SECURITY_COOKIE_SAMESITE: strict
       GF_SECURITY_DISABLE_GRAVATAR: "true"
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -409,7 +411,9 @@ services:
       - ./deployments/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deployments/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     expose: ["3000"]
-    networks: [default, telemetry-private]
+    ports:
+      - 127.0.0.1:${WDE_GRAFANA_LOCAL_PORT:-33000}:3000
+    networks: [telemetry-private]
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

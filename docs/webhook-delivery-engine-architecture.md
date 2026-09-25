@@ -42,7 +42,7 @@ Esta arquitetura absorve `SEC-001` a `SEC-025` do Security Review do PRD. O proj
 ### 2.2 Restrições do MVP
 
 - Go 1.27.x e PostgreSQL 17.x.
-- Sem frontend, login humano, broker externo ou serviço comercial obrigatório.
+- Console Go SSR opcional, sem signup, equipes, billing, SPA ou serviço comercial obrigatório.
 - HTTPS em destinos; HTTP somente no perfil `local`, impossível de habilitar no perfil `production`.
 - Um único módulo Go e um único schema lógico, com papéis de banco separados por processo.
 - Escala-alvo de laboratório: pelo menos 100 eventos/s e 100 entregas/s no cenário de referência.
@@ -676,7 +676,7 @@ Defesas de infraestrutura recomendadas, sem substituir controles do código: egr
 | Extensão periódica de lease | tentativas legítimas precisarem exceder a relação timeout/TTL atual |
 | KMS/HSM e envelope com DEK por registro | hospedagem real, requisito de compliance ou rotação em escala |
 | Multi-região/HA | demanda real e definição de RPO/RTO |
-| Dashboard, CLI e login humano | contrato API estabilizado e feedback justificar |
+| Gestão de usuários/equipes, billing e RBAC humano | uso real e novo threat model justificarem |
 | Payload retrieval | caso de uso e novo security review; proibido no MVP |
 | Redirect controlado | necessidade real e novo threat model; desabilitado no MVP |
 
@@ -686,7 +686,7 @@ Adiamento não autoriza stub inseguro ou flag oculta. Recursos ausentes retornam
 
 A API e o worker já são processos separados para escalarem independentemente, mas continuam um produto e codebase. Um módulo só vira serviço se métricas mostrarem necessidade de isolamento de deploy, escala ou risco, e após definir propriedade de dados, contrato e falhas. Compartilhar PostgreSQL entre serviços extraídos não será tratado como separação concluída.
 
-Possíveis evoluções, na ordem: hardening após review, dashboard/CLI, circuit breaker, coordenação de quotas em escala maior, KMS, broker e orquestração. Nenhuma entra no MVP por valor de currículo apenas.
+Possíveis evoluções, na ordem: hardening após review, RBAC humano/CLI, circuit breaker, coordenação de quotas em escala maior, KMS, broker e orquestração. Nenhuma entra no MVP por valor de currículo apenas.
 
 ## 27. ADRs
 

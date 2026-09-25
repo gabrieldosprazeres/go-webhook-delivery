@@ -70,7 +70,8 @@ WDE_SHOWCASE_DOCS_URL=https://docs.webhooks.gabrieldosprazeres.com.br
 WDE_SHOWCASE_CONSOLE_URL=https://console.webhooks.gabrieldosprazeres.com.br
 WDE_DOCS_API_URL=https://api.webhooks.gabrieldosprazeres.com.br
 WDE_CONSOLE_ORIGIN=https://console.webhooks.gabrieldosprazeres.com.br
-WDE_GRAFANA_ROOT_URL=https://observability.webhooks.gabrieldosprazeres.com.br
+WDE_GRAFANA_LOCAL_PORT=33000
+WDE_GRAFANA_ROOT_URL=http://localhost:33000
 WDE_SHOWCASE_GITHUB_URL=https://github.com/gabrieldosprazeres/go-webhook-delivery
 WDE_SHOWCASE_RELEASE_URL=https://github.com/gabrieldosprazeres/go-webhook-delivery/releases
 WDE_SHOWCASE_LINKEDIN_URL=https://www.linkedin.com/in/gabrieldosprazeres
@@ -88,12 +89,22 @@ No EasyPanel, cadastre exatamente:
 | Swagger | `docs.webhooks.gabrieldosprazeres.com.br` | `swagger` | `8080` | pública, HTTPS |
 | API | `api.webhooks.gabrieldosprazeres.com.br` | `api` | `8080` | pública, HTTPS |
 | Console | `console.webhooks.gabrieldosprazeres.com.br` | `console` | `8082` | autenticada, HTTPS |
-| Observabilidade | `observability.webhooks.gabrieldosprazeres.com.br` | `grafana` | `3000` | somente operador, HTTPS |
 
 Não atribua domínio a `postgres`, `migrate`, `worker`, `otel-collector`, `prometheus`,
-`tempo` ou às portas `9090`–`9092`. Não adicione `ports:` ao Compose produtivo. Ative
-TLS antes do uso. Proteja o hostname do Grafana com a conta de operador e, quando
-disponível, allowlist/VPN/SSO do provedor; ele não faz parte da demo para recrutadores.
+`tempo`, `grafana` ou às portas `9090`–`9092`. O único bind da stack operacional é o
+Grafana em `127.0.0.1:33000`; loopback não aceita tráfego externo e não deve ser alterado
+para `0.0.0.0`. Ele não faz parte da demo para recrutadores.
+
+O operador acessa o Grafana somente pelo túnel SSH criptografado:
+
+```bash
+ssh -N -L 33000:127.0.0.1:33000 <usuario-vps>@2.24.90.172
+```
+
+Com o túnel ativo, abra `http://localhost:33000` e autentique como `operator`. O cookie
+não usa `Secure` porque termina em HTTP no loopback do navegador; o transporte entre a
+máquina do operador e a VPS é o canal SSH. `SameSite=Strict`, autenticação obrigatória
+e ausência de signup/anônimo continuam aplicados.
 
 ## 5. Primeiro deploy
 
@@ -132,8 +143,11 @@ No console, use uma API key criada pelo bootstrap. A chave é trocada por sessã
 e não é persistida. Cadastre um endpoint HTTPS sintético, publique um evento, acompanhe
 a delivery e confira o painel de 24 horas. Para uma entrevista, compartilhe a API key
 de demo por canal privado e revogue-a depois; nunca publique a chave no GitHub ou na
-landing page. No hostname de observabilidade, entre com `operator` (ou
+landing page. Para a observabilidade operacional, abra primeiro o túnel SSH descrito
+acima e entre em `http://localhost:33000` com `operator` (ou
 `WDE_GRAFANA_ADMIN_USER`) e a senha gerada em `WDE_GRAFANA_ADMIN_PASSWORD`.
+Prometheus, Tempo e Collector não possuem interface externa; são consumidos pelo
+Grafana dentro da rede privada.
 
 ## 7. Backup, atualização e rollback
 

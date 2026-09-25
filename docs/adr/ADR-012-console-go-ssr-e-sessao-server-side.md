@@ -14,6 +14,13 @@ A sessão expira após 15 minutos inativa ou 60 minutos absolutos. Revogação/e
 
 O console reutiliza serviços de domínio; não chama a API por loopback e não faz fetch direto ao destino.
 
+O login aplica limite local global de 120 tentativas/minuto, no máximo 32 em voo e
+10 tentativas/minuto por prefixo sintaticamente válido extraído do form bounded. Como o
+EasyPanel termina a conexão no proxy, `RemoteAddr` não é tratado como IP confiável do
+cliente e headers encaminhados não são aceitos como identidade. O bucket de origem tem
+o mesmo teto global para não transformar o proxy compartilhado em gargalo; a proteção
+por prefixo continua independente sem armazenar ou registrar a API key.
+
 ## Alternativas descartadas
 
 - Guardar a API key no navegador ou sessão: amplia impacto de XSS e vazamento.

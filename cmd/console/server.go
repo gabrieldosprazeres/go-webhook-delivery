@@ -48,7 +48,7 @@ func serveConsole(ctx context.Context, cfg config.Config, logger *slog.Logger, p
 	endpointStore := endpoint.NewPostgresStore(pool)
 	deliveryStore := delivery.NewPostgresStore(pool, materials.CursorPepper)
 	loginLimiter := ratelimit.NewEdge(ratelimit.EdgePolicy{
-		MaxInFlight: 32, Global: 120, Origin: 10, Prefix: 10, MaxBuckets: 1024, Window: time.Minute,
+		MaxInFlight: 32, Global: 120, Origin: 120, Prefix: 10, MaxBuckets: 1024, Window: time.Minute,
 	}, materials.RateLimitPepper)
 	quotaLimiter := ratelimit.New(pool, materials.RateLimitPepper)
 	handler := webconsole.New(webconsole.Dependencies{
@@ -57,7 +57,7 @@ func serveConsole(ctx context.Context, cfg config.Config, logger *slog.Logger, p
 		Deliveries: deliveryStore, Replay: delivery.NewReplayService(deliveryStore, materials),
 		Insights: insights.NewPostgresStore(pool), Origin: cfg.Console.Origin,
 		SecureCookies: cfg.Profile == config.ProfileProduction, Telemetry: observability,
-		LoginGuard:     loginLimiter.Middleware,
+		LoginGuard:     loginLimiter.LoginMiddleware,
 		Limiter:        quotaLimiter,
 		QueryPolicy:    quotaPolicy("query", cfg.Quotas.Query),
 		IngestPolicy:   quotaPolicy("ingest", cfg.Quotas.Ingest),

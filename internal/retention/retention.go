@@ -12,13 +12,13 @@ var ErrDegraded = errors.New("retention: maintenance degraded")
 
 type Counts struct {
 	Payloads, Secrets, Attempts, Replays, Rotations int64
-	Deliveries, Events, Audits, Buckets             int64
+	Deliveries, Events, Audits, Buckets, Sessions   int64
 	WorkspaceRows, WorkspaceSteps                   int64
 }
 
 func (c Counts) Progress() int64 {
 	return c.Payloads + c.Secrets + c.Attempts + c.Replays + c.Rotations +
-		c.Deliveries + c.Events + c.Audits + c.Buckets + c.WorkspaceRows + c.WorkspaceSteps
+		c.Deliveries + c.Events + c.Audits + c.Buckets + c.Sessions + c.WorkspaceRows + c.WorkspaceSteps
 }
 
 func (c *Counts) Add(other Counts) {
@@ -31,6 +31,7 @@ func (c *Counts) Add(other Counts) {
 	c.Events += other.Events
 	c.Audits += other.Audits
 	c.Buckets += other.Buckets
+	c.Sessions += other.Sessions
 	c.WorkspaceRows += other.WorkspaceRows
 	c.WorkspaceSteps += other.WorkspaceSteps
 }

@@ -21,15 +21,18 @@ func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID uuid.UUID) (Sn
 		}
 		if err := tx.QueryRow(ctx, `WITH d AS(
 			SELECT count(*) deliveries,
-			 count(*) FILTER(WHERE status='pending') pending,
-			 count(*) FILTER(WHERE status='processing') processing,
-			 count(*) FILTER(WHERE status='retry_scheduled') retry_scheduled,
 			 count(*) FILTER(WHERE status='succeeded') succeeded,
 			 count(*) FILTER(WHERE status='failed_permanent') failed_permanent,
-			 count(*) FILTER(WHERE status='dead_letter') dead_letter,
-				 COALESCE(GREATEST(EXTRACT(EPOCH FROM statement_timestamp()-(min(next_attempt_at)
-				   FILTER(WHERE status IN('pending','retry_scheduled') AND next_attempt_at<=statement_timestamp()))),0),0) oldest
+			 count(*) FILTER(WHERE status='dead_letter') dead_letter
 			FROM wde.deliveries WHERE workspace_id=$1 AND created_at>=statement_timestamp()-interval '24 hours'
+		), q AS(
+			SELECT count(*) FILTER(WHERE status='pending') pending,
+			 count(*) FILTER(WHERE status='processing') processing,
+			 count(*) FILTER(WHERE status='retry_scheduled') retry_scheduled,
+			 COALESCE(GREATEST(EXTRACT(EPOCH FROM statement_timestamp()-(min(next_attempt_at)
+			   FILTER(WHERE status IN('pending','retry_scheduled') AND next_attempt_at<=statement_timestamp()))),0),0) oldest
+			FROM wde.deliveries WHERE workspace_id=$1
+			  AND status IN('pending','processing','retry_scheduled')
 		), a AS(
 			SELECT count(*) attempts,count(*) FILTER(WHERE outcome='retry') retries,
 			 COALESCE(percentile_cont(0.95) WITHIN GROUP(ORDER BY duration_ms)
@@ -40,8 +43,8 @@ func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID uuid.UUID) (Sn
 			SELECT count(*) events FROM wde.events WHERE workspace_id=$1
 			  AND created_at>=statement_timestamp()-interval '24 hours'
 		)
-		SELECT statement_timestamp(),e.events,d.deliveries,d.pending,d.processing,d.retry_scheduled,
-		 d.succeeded,d.failed_permanent,d.dead_letter,a.attempts,a.retries,a.p95,d.oldest FROM d,a,e`, workspaceID).
+		SELECT statement_timestamp(),e.events,d.deliveries,q.pending,q.processing,q.retry_scheduled,
+		 d.succeeded,d.failed_permanent,d.dead_letter,a.attempts,a.retries,a.p95,q.oldest FROM d,q,a,e`, workspaceID).
 			Scan(&result.Summary.GeneratedAt, &result.Summary.Events, &result.Summary.Deliveries,
 				&result.Summary.Pending, &result.Summary.Processing, &result.Summary.RetryScheduled,
 				&result.Summary.Succeeded, &result.Summary.FailedPermanent, &result.Summary.DeadLetter,

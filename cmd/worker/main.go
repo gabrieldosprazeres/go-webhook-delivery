@@ -147,6 +147,7 @@ func retentionObserver(ctx context.Context, logger *slog.Logger, metrics *teleme
 				slog.Int64("events", report.Counts.Events),
 				slog.Int64("audits", report.Counts.Audits),
 				slog.Int64("buckets", report.Counts.Buckets),
+				slog.Int64("sessions", report.Counts.Sessions),
 				slog.Int64("workspace_rows", report.Counts.WorkspaceRows)))
 	}
 }
@@ -157,7 +158,8 @@ func observeRetention(metrics *telemetry.Metrics, report retention.Report) {
 		"attempt": report.Counts.Attempts, "replay": report.Counts.Replays,
 		"rotation": report.Counts.Rotations, "delivery": report.Counts.Deliveries,
 		"event": report.Counts.Events, "audit": report.Counts.Audits,
-		"bucket": report.Counts.Buckets, "workspace": report.Counts.WorkspaceRows,
+		"bucket": report.Counts.Buckets, "session": report.Counts.Sessions,
+		"workspace": report.Counts.WorkspaceRows,
 	}
 	for category, count := range counts {
 		metrics.ObservePurge(category, count)

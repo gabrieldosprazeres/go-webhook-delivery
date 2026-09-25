@@ -158,6 +158,11 @@ func PresentedPrefix(header string) (string, bool) {
 	return prefix, ok
 }
 
+// PresentedTokenPrefix extracts only the public syntactic prefix from a raw
+// API-key candidate. It never authenticates the token and must only be used
+// for best-effort local throttling.
+func PresentedTokenPrefix(token string) (string, bool) { return tokenPrefix(strings.TrimSpace(token)) }
+
 func Generate(test bool, pepper [32]byte) (token string, prefix string, verifier [32]byte, err error) {
 	var prefixRaw [8]byte
 	var secret [32]byte

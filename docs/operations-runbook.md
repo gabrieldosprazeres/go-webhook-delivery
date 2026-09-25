@@ -68,6 +68,11 @@ protocolo de ingestão, não uma interface web: API, worker e console enviam tra
 `http://otel-collector:4318`, o Collector redige atributos e encaminha ao Tempo. O
 Prometheus coleta apenas os listeners operacionais privados.
 
+No EasyPanel, o Grafana publica somente `127.0.0.1:33000`. Acesse por túnel SSH com
+`ssh -N -L 33000:127.0.0.1:33000 <usuario-vps>@2.24.90.172` e abra
+`http://localhost:33000`. Nunca crie domínio ou bind `0.0.0.0` para Grafana,
+Prometheus, Tempo ou Collector.
+
 No Grafana, confirme os datasources provisionados `Prometheus` e `Tempo` e os painéis
 `WDE · Runtime` e `WDE · Delivery Engine`. Investigue por janela temporal e IDs opacos;
 nunca copie payload, API key, segredo, URL ou header para uma anotação. A queda de
