@@ -6,11 +6,14 @@ secret_names=(
   migrator_pgpass
   api_pgpass
   worker_pgpass
+  console_pgpass
   auth_pepper
   idempotency_pepper
   fingerprint_pepper
   rate_limit_pepper
   cursor_pepper
+  console_session_pepper
+  console_csrf_pepper
   payload_keyring
   signing_keyring
 )

@@ -1,0 +1,11 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {"type":"stat","title":"API request rate","datasource":{"uid":"prometheus"},"targets":[{"expr":"sum(rate(wde_http_requests_total{job=\"wde-api\"}[5m]))","refId":"A"}],"gridPos":{"x":0,"y":0,"w":8,"h":6}},
+    {"type":"stat","title":"Console request rate","datasource":{"uid":"prometheus"},"targets":[{"expr":"sum(rate(wde_http_requests_total{job=\"wde-console\"}[5m]))","refId":"A"}],"gridPos":{"x":8,"y":0,"w":8,"h":6}},
+    {"type":"stat","title":"Workers ativos","datasource":{"uid":"prometheus"},"targets":[{"expr":"sum(wde_active_workers)","refId":"A"}],"gridPos":{"x":16,"y":0,"w":8,"h":6}},
+    {"type":"timeseries","title":"Latência HTTP p95","datasource":{"uid":"prometheus"},"targets":[{"expr":"histogram_quantile(0.95,sum by(le,job)(rate(wde_http_request_duration_seconds_bucket[5m])))","legendFormat":"{{job}}","refId":"A"}],"gridPos":{"x":0,"y":6,"w":24,"h":9}}
+  ],
+  "refresh":"30s","schemaVersion":41,"tags":["wde","runtime"],"templating":{"list":[]},"time":{"from":"now-6h","to":"now"},"title":"WDE · Runtime","uid":"wde-runtime","version":1
+}
