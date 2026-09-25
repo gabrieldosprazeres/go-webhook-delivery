@@ -1,8 +1,8 @@
 # PRD: Webhook Delivery Engine
 
 **Status:** Planejamento  
-**Versão:** 1.0  
-**Data:** 2026-09-23  
+**Versão:** 1.2
+**Data:** 2026-09-25
 **Repositório:** `go-webhook-delivery`  
 **Classificação:** Projeto novo — produto backend/API de alta confiabilidade  
 **Próxima etapa obrigatória:** Security Review do PRD
@@ -41,7 +41,7 @@ Permitir que um desenvolvedor integre uma aplicação produtora a um mecanismo d
 - Substituir Kafka, Redis Streams ou um broker genérico de mensagens.
 - Oferecer semântica `exactly-once`; destinos também devem tratar duplicações.
 - Processar eventos arbitrários entre consumidores internos ou oferecer pub/sub genérico.
-- Criar dashboard web no MVP.
+- Oferecer signup, gestão de equipes, billing ou Grafana público no primeiro release do console.
 - Oferecer billing, planos comerciais, organizações complexas ou marketplace de integrações.
 - Usar Kafka, Redis ou Kubernetes no MVP.
 - Suportar plugins, transformações de payload ou execução de código fornecido pelo usuário.
@@ -74,7 +74,7 @@ Permitir que um desenvolvedor integre uma aplicação produtora a um mecanismo d
 
 **Abordagem escolhida para o MVP:** A — permissões fixas expressas por escopos de API key.
 
-Não haverá login humano nem UI no MVP. Cada workspace terá credenciais de alta entropia, armazenadas de modo não reversível e associadas a escopos fixos. A separação por workspace é obrigatória.
+O primeiro release do console aceita uma API key existente e cria uma sessão humana curta, server-side. A API pública permanece Bearer-only. Não haverá cadastro de usuário, senha, SSO ou emissão de credencial pela UI. Cada workspace mantém credenciais de alta entropia, armazenadas de modo não reversível e associadas a escopos fixos. A separação por workspace é obrigatória.
 
 | Escopo | Permissões de alto nível |
 |---|---|
@@ -84,7 +84,7 @@ Não haverá login humano nem UI no MVP. Cada workspace terá credenciais de alt
 | `deliveries:retry` | Solicitar replay manual auditável |
 | `admin` | Todas as permissões do workspace |
 
-**Fora do MVP:** usuários humanos, JWT, roles configuráveis e interface de administração. Essa decisão reduz escopo sem eliminar isolamento e princípio do menor privilégio.
+**Fora do primeiro release:** contas humanas persistentes, JWT, roles configuráveis e interface administrativa. O console é uma experiência derivada da API key, não um novo sistema de identidade.
 
 ## 7. Integrações externas
 
