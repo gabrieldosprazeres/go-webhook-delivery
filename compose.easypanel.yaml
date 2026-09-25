@@ -96,7 +96,8 @@ services:
       postgres:
         condition: service_healthy
     <<: *app-security
-    tmpfs: [/tmp:size=16m,mode=1777]
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
     deploy:
       resources:
         limits:
@@ -143,7 +144,8 @@ services:
       migrate:
         condition: service_completed_successfully
     <<: *app-security
-    tmpfs: [/tmp:size=16m,mode=1777]
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
     healthcheck:
       test: [CMD, /service, healthcheck]
       interval: 10s
@@ -194,7 +196,8 @@ services:
       migrate:
         condition: service_completed_successfully
     <<: *app-security
-    tmpfs: [/tmp:size=16m,mode=1777]
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
     healthcheck:
       test: [CMD, /service, healthcheck]
       interval: 10s
@@ -229,7 +232,8 @@ services:
       WDE_VERSION: ${WDE_VERSION:-easypanel}
     expose: ["8080"]
     <<: *app-security
-    tmpfs: [/tmp:size=8m,mode=1777]
+    tmpfs:
+      - "/tmp:size=8m,mode=1777"
     healthcheck:
       test: [CMD, /service, healthcheck]
       interval: 10s
@@ -257,7 +261,8 @@ services:
       WDE_DOCS_API_URL: ${WDE_DOCS_API_URL:?WDE_DOCS_API_URL is required}
     expose: ["8080"]
     <<: *app-security
-    tmpfs: [/tmp:size=8m,mode=1777]
+    tmpfs:
+      - "/tmp:size=8m,mode=1777"
     healthcheck:
       test: [CMD, /service, healthcheck]
       interval: 10s
