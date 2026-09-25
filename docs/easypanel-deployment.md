@@ -150,6 +150,11 @@ acima e entre em `http://localhost:33000` com `operator` (ou
 Prometheus, Tempo e Collector não possuem interface externa; são consumidos pelo
 Grafana dentro da rede privada.
 
+Na verificação interna, confirme ainda que o Tempo usa `/var/tempo` como `tmpfs` de
+256 MiB, não como volume nomeado, e que a regra Prometheus
+`WDETempoDiscardingSpans` está carregada. Traces são evidência operacional efêmera:
+reiniciar o Tempo os remove, enquanto API, worker e console continuam funcionais.
+
 ## 7. Backup, atualização e rollback
 
 - Faça snapshot/backup cifrado do volume `postgres-data` fora da VPS e ensaie restore.

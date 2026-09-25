@@ -73,6 +73,13 @@ No EasyPanel, o Grafana publica somente `127.0.0.1:33000`. Acesse por túnel SSH
 `http://localhost:33000`. Nunca crie domínio ou bind `0.0.0.0` para Grafana,
 Prometheus, Tempo ou Collector.
 
+O Tempo grava traces em `tmpfs` com teto físico de 256 MiB e os perde em restart.
+Ingestão acima de 1 MiB/s, burst de 2 MiB, 2.000 traces ativos por tenant interno,
+atributo acima de 4 KiB ou trace acima de 1 MiB é descartada de forma controlada.
+Consulte a regra `WDETempoDiscardingSpans` no Prometheus/Grafana: se estiver firing,
+reduza sampling ou investigue cardinalidade/tamanho antes de elevar qualquer limite.
+Não substitua o `tmpfs` por volume ilimitado na VPS.
+
 No Grafana, confirme os datasources provisionados `Prometheus` e `Tempo` e os painéis
 `WDE · Runtime` e `WDE · Delivery Engine`. Investigue por janela temporal e IDs opacos;
 nunca copie payload, API key, segredo, URL ou header para uma anotação. A queda de

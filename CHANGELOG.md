@@ -25,6 +25,8 @@ dos commits convencionais do repositório.
   limit antes do lookup, scopes vivos, máximo de cinco sessões e isolamento por RLS.
 - Grafana limitado ao loopback/túnel SSH; Prometheus, Tempo, Collector e listeners
   operacionais permanecem sem domínio ou porta pública.
+- Limite global de borda do console é aplicado antes de sessão, banco e tracing; Tempo
+  usa `tmpfs` de 256 MiB, limites de ingestão e alerta para descarte de spans.
 - Artefatos do browser smoke são sanitizados, validados com canário e enviados
   somente após sucesso; trace, vídeo e screenshot automático do login ficam
   desligados.

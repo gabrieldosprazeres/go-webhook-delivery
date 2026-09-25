@@ -1,0 +1,11 @@
+groups:
+  - name: wde-tempo
+    rules:
+      - alert: WDETempoDiscardingSpans
+        expr: sum(rate(tempo_discarded_spans_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Tempo is discarding spans
+          description: Trace ingestion exceeded a configured safety limit during the last five minutes.

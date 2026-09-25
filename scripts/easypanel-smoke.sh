@@ -36,6 +36,9 @@ printf '%s' "$base_config" | jq -e '
   .services["otel-collector"].ports == null and
   .services.prometheus.ports == null and
   .services.tempo.ports == null and
+  (.services.tempo.tmpfs | index("/var/tempo:size=256m,mode=0750,uid=10001,gid=10001")) != null and
+  ([.services.tempo.volumes[]? | select(.target == "/var/tempo")] | length) == 0 and
+  ([.services.prometheus.volumes[]? | select(.target == "/etc/prometheus/alerts.yaml" and .read_only == true)] | length) == 1 and
   (.services.grafana.ports | length) == 1 and
   .services.grafana.ports[0].target == 3000 and
   .services.grafana.ports[0].published == "13000" and
@@ -84,13 +87,16 @@ for service in otel-collector prometheus tempo grafana; do
   docker inspect --format '{{json .HostConfig.CapDrop}}' "$container_id" | grep -q 'ALL'
   docker inspect --format '{{json .HostConfig.SecurityOpt}}' "$container_id" | grep -q 'no-new-privileges'
 done
+tempo_id=$(docker compose -p "$project" --env-file "$secrets" $compose_files ps -q tempo)
+docker inspect --format '{{json .HostConfig.Tmpfs}}' "$tempo_id" |
+  jq -e '.["/var/tempo"] | contains("size=268435456")' >/dev/null
 
 targets_ready=false
 attempt=0
 while [ "$attempt" -lt 30 ]; do
   targets=$(curl --fail --silent --show-error --get --data-urlencode 'query=up' \
     http://127.0.0.1:19093/api/v1/query)
-  if [ "$(printf '%s' "$targets" | jq '[.data.result[] | select(.value[1] == "1")] | length')" -ge 4 ]; then
+  if [ "$(printf '%s' "$targets" | jq '[.data.result[] | select(.value[1] == "1")] | length')" -ge 5 ]; then
     targets_ready=true
     break
   fi
@@ -98,6 +104,8 @@ while [ "$attempt" -lt 30 ]; do
   sleep 1
 done
 test "$targets_ready" = true
+curl --fail --silent --show-error http://127.0.0.1:19093/api/v1/rules |
+  jq -e '.data.groups[].rules[] | select(.name == "WDETempoDiscardingSpans" and .type == "alerting")' >/dev/null
 
 trace_id=0123456789abcdef0123456789abcdef
 start_ns=$(($(date +%s) * 1000000000))

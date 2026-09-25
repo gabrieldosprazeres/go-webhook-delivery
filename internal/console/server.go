@@ -33,6 +33,7 @@ type Dependencies struct {
 	Origin         string
 	SecureCookies  bool
 	Telemetry      *telemetry.Service
+	PublicGuard    func(http.Handler) http.Handler
 	LoginGuard     func(http.Handler) http.Handler
 	Limiter        interface {
 		Consume(context.Context, auth.Principal, uuid.UUID, ratelimit.Policy) error
@@ -85,6 +86,11 @@ func (s *Server) Handler() http.Handler {
 	handler := http.Handler(mux)
 	if s.deps.Telemetry != nil {
 		handler = s.deps.Telemetry.HTTP("console", handler)
+	}
+	// Keep the public edge guard outside telemetry and all routes so abusive
+	// traffic is rejected before it can create spans or query session state.
+	if s.deps.PublicGuard != nil {
+		handler = s.deps.PublicGuard(handler)
 	}
 	return s.securityHeaders(handler)
 }

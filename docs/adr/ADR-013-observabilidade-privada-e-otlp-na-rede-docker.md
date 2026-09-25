@@ -18,7 +18,11 @@ hostname público.
 
 OTLP/HTTP sem TLS é aceito em produção apenas quando `WDE_OTEL_ALLOW_PRIVATE_HTTP=true` e o endpoint é exatamente `http://otel-collector:4318`. Qualquer outro HTTP continua fail-closed. Ao mover o Collector para outro host, HTTPS/mTLS volta a ser obrigatório.
 
-Retenção inicial: Prometheus 7 dias/512 MB e Tempo 24 horas. Telemetria é descartável e sua indisponibilidade nunca bloqueia ingestão ou entrega.
+Retenção inicial: Prometheus 7 dias/512 MB. O Tempo retém até 24 horas em `tmpfs`
+de 256 MiB, com ingestão local limitada a 1 MiB/s, burst de 2 MiB e trace individual
+de até 1 MiB. A regra `WDETempoDiscardingSpans` sinaliza no Prometheus quando qualquer
+limite começa a descartar spans. Telemetria é descartável, pode ser perdida no restart
+e sua indisponibilidade nunca bloqueia ingestão ou entrega.
 
 ## Alternativas descartadas
 
@@ -28,4 +32,7 @@ Retenção inicial: Prometheus 7 dias/512 MB e Tempo 24 horas. Telemetria é des
 
 ## Consequências
 
-O risco residual de tráfego claro existe somente dentro do daemon já privilegiado. Configuração, dashboards e datasources ficam versionados; volumes de telemetria não entram no backup crítico.
+O risco residual de tráfego claro existe somente dentro do daemon já privilegiado.
+Configuração, regras, dashboards e datasources ficam versionados. O volume Prometheus
+e o volume Grafana não entram no backup crítico; traces do Tempo são explicitamente
+efêmeros e possuem limite físico de armazenamento.

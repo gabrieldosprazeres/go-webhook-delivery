@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/auth"
 	"github.com/gabrieldosprazeres/go-webhook-delivery/internal/consolesession"
@@ -20,6 +21,7 @@ type consoleTestSessionStore struct {
 	principal   auth.Principal
 	revokeErr   error
 	revokeCalls int
+	lookupCalls int
 }
 
 func (s *consoleTestSessionStore) Create(_ context.Context, principal auth.Principal, _ string,
@@ -31,6 +33,7 @@ func (s *consoleTestSessionStore) Create(_ context.Context, principal auth.Princ
 }
 
 func (s *consoleTestSessionStore) Lookup(context.Context, string) (consolesession.LookupRecord, bool, error) {
+	s.lookupCalls++
 	return s.record, s.record.ID != uuid.Nil, nil
 }
 
@@ -128,6 +131,43 @@ func TestLoginRouteUsesConfiguredGuard(t *testing.T) {
 
 	if !called || response.Code != http.StatusTooManyRequests {
 		t.Fatalf("guard called=%v status=%d", called, response.Code)
+	}
+}
+
+func TestPublicGuardThrottlesBeforeSessionLookup(t *testing.T) {
+	sessions, store, apiKey := newConsoleTestSessions("deliveries:read")
+	session, err := sessions.Login(context.Background(), apiKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limiter := ratelimit.NewEdge(ratelimit.EdgePolicy{
+		MaxInFlight: 1, Global: 1, Origin: 1, Prefix: 1, MaxBuckets: 8, Window: time.Minute,
+	}, [32]byte{9})
+	server := New(Dependencies{
+		Sessions: sessions, Origin: "https://console.example.test", SecureCookies: true,
+		PublicGuard: limiter.Middleware,
+	})
+
+	serve := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "https://console.example.test/app/events/new", nil)
+		request.RemoteAddr = "203.0.113.10:4321"
+		request.AddCookie(&http.Cookie{Name: productionCookie, Value: session.Token})
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		return response
+	}
+
+	if first := serve(); first.Code != http.StatusForbidden {
+		t.Fatalf("first status=%d body=%s", first.Code, first.Body.String())
+	}
+	if store.lookupCalls != 1 {
+		t.Fatalf("first request session lookups=%d", store.lookupCalls)
+	}
+	if second := serve(); second.Code != http.StatusTooManyRequests {
+		t.Fatalf("second status=%d body=%s", second.Code, second.Body.String())
+	}
+	if store.lookupCalls != 1 {
+		t.Fatalf("throttled request reached session store: lookups=%d", store.lookupCalls)
 	}
 }
 

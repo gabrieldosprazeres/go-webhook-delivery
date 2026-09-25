@@ -15,6 +15,17 @@ compactor:
   compaction:
     block_retention: 24h
 
+overrides:
+  defaults:
+    ingestion:
+      rate_strategy: local
+      rate_limit_bytes: 1048576
+      burst_size_bytes: 2097152
+      max_traces_per_user: 2000
+      max_attribute_bytes: 4096
+    global:
+      max_bytes_per_trace: 1048576
+
 storage:
   trace:
     backend: local
