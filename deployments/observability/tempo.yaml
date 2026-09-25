@@ -8,13 +8,6 @@ distributor:
         http:
           endpoint: 0.0.0.0:4318
 
-ingester:
-  max_block_duration: 5m
-
-compactor:
-  compaction:
-    block_retention: 24h
-
 overrides:
   defaults:
     ingestion:
@@ -25,6 +18,8 @@ overrides:
       max_attribute_bytes: 4096
     global:
       max_bytes_per_trace: 1048576
+    compaction:
+      block_retention: 24h
 
 storage:
   trace:
