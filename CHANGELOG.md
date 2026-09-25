@@ -5,6 +5,8 @@ dos commits convencionais do repositório.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-09-25
+
 ### Adicionado
 
 - Vitrine pública em pt-BR, Swagger UI e topologia de demonstração para EasyPanel.

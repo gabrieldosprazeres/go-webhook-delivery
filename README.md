@@ -3,15 +3,19 @@
 [![CI](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](api/openapi.yaml)
-[![Release](https://img.shields.io/badge/release-v1.0.1-blue)](CHANGELOG.md)
+[![Release](https://img.shields.io/badge/release-v1.1.0-blue)](CHANGELOG.md)
 
 Serviço de entrega confiável de webhooks escrito em Go. O projeto demonstra ingestão
 idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento
 multi-tenant, assinatura HMAC, defesa SSRF e operação observável.
 
-> Estado atual: `v1.0.1` concluída e validada. Code Review, QA, auditoria
+> Estado atual: `v1.1.0` concluída e validada. Code Review, QA, auditoria
 > OWASP, matriz adversarial, rollback, smoke de containers, SBOM e scans passaram sem
 > ressalvas bloqueadoras. O projeto nunca promete `exactly-once`.
+
+**Demonstração:** [vitrine pública](https://webhooks.gabrieldosprazeres.com.br) ·
+[Swagger/OpenAPI](https://docs.webhooks.gabrieldosprazeres.com.br) ·
+[descoberta da API](https://api.webhooks.gabrieldosprazeres.com.br)
 
 ## Problema e arquitetura
 
