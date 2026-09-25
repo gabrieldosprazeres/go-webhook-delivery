@@ -122,7 +122,7 @@ jobs:
       - name: Install pinned browser test dependencies
         run: |
           npm ci --prefix test/browser
-          npm exec --prefix test/browser playwright install --with-deps chromium
+          npm exec --prefix test/browser -- playwright install --with-deps chromium
       - name: Validate Compose
         run: docker compose --profile demo config --quiet
       - name: Build every image target
