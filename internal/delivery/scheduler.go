@@ -25,6 +25,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	done := make(chan error, r.concurrency)
 	active := 0
 	emptyPolls := int16(0)
+	failureBackoff := int16(0)
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 
@@ -35,9 +36,15 @@ func (r *Runner) Run(ctx context.Context) error {
 		case err := <-done:
 			active--
 			r.observeInflight(active)
-			if err != nil {
+			if errors.Is(err, ErrJobPanic) {
 				cancelWork()
 				return r.drain(done, active, cancelWork, err)
+			}
+			if err != nil {
+				failureBackoff = nextBackoffStep(failureBackoff)
+				resetTimer(timer, r.poll.Delay(failureBackoff))
+			} else {
+				failureBackoff = 0
 			}
 		case <-timer.C:
 			slots := r.concurrency - active
@@ -50,8 +57,13 @@ func (r *Runner) Run(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return r.drain(done, active, cancelWork, nil)
 				}
-				cancelWork()
-				return r.drain(done, active, cancelWork, err)
+				if errors.Is(err, ErrJobPanic) {
+					cancelWork()
+					return r.drain(done, active, cancelWork, err)
+				}
+				failureBackoff = nextBackoffStep(failureBackoff)
+				timer.Reset(r.poll.Delay(failureBackoff))
+				continue
 			}
 			for _, claim := range claims {
 				active++
@@ -59,9 +71,8 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 			r.observeInflight(active)
 			if len(claims) == 0 {
-				if emptyPolls < 32767 {
-					emptyPolls++
-				}
+				failureBackoff = 0
+				emptyPolls = nextBackoffStep(emptyPolls)
 				timer.Reset(r.poll.Delay(emptyPolls))
 			} else if active >= r.concurrency {
 				emptyPolls = 0
@@ -72,6 +83,23 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func nextBackoffStep(current int16) int16 {
+	if current < 32767 {
+		return current + 1
+	}
+	return current
+}
+
+func resetTimer(timer *time.Timer, delay time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(delay)
 }
 
 func (r *Runner) observeInflight(active int) {
