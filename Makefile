@@ -4,7 +4,8 @@ GO ?= go
 
 .PHONY: help fmt fmt-check tidy-check test integration adversarial race vet staticcheck vuln secret-scan \
 	openapi-lint build check migration-validate migrate-up migrate-status compose-config compose-up \
-	compose-demo compose-down quickstart benchmark soak images supply-chain container-smoke rollback-rehearsal
+	compose-demo compose-down quickstart benchmark soak images supply-chain container-smoke rollback-rehearsal \
+	easypanel-config easypanel-smoke
 
 help: ## Lista os comandos disponiveis.
 	@awk 'BEGIN {FS = ":.*##"; printf "Uso: make <alvo>\n\n"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -51,11 +52,13 @@ secret-scan: ## Procura segredos no historico Git com Gitleaks pinado e verifica
 openapi-lint: ## Carrega, resolve referencias e valida semanticamente o contrato OpenAPI.
 	$(GO) test ./api -run '^TestOpenAPIContract$$' -count=1
 
-build: ## Compila os tres binarios em bin/.
+build: ## Compila os cinco binarios em bin/.
 	mkdir -p bin
 	$(GO) build -trimpath -o bin/api ./cmd/api
 	$(GO) build -trimpath -o bin/worker ./cmd/worker
 	$(GO) build -trimpath -o bin/chaoslab ./cmd/chaoslab
+	$(GO) build -trimpath -o bin/showcase ./cmd/showcase
+	$(GO) build -trimpath -o bin/docs ./cmd/docs
 
 migration-validate: ## Valida a sintaxe das migrations sem acessar o banco.
 	$(GO) tool goose -dir db/migrations validate
@@ -70,6 +73,12 @@ migrate-status: ## Consulta migrations; exige WDE_MIGRATOR_DATABASE_URL.
 
 compose-config: ## Valida o Compose local.
 	docker compose --profile demo config --quiet
+
+easypanel-config: ## Valida a topologia de producao; exige secrets e URLs publicas WDE_* no ambiente.
+	docker compose -f compose.easypanel.yaml config --quiet
+
+easypanel-smoke: ## Sobe e valida a topologia produtiva em ambiente descartavel.
+	./scripts/easypanel-smoke.sh
 
 compose-up: ## Sobe PostgreSQL, migration explicita, API e worker.
 	docker compose --profile core up --build
@@ -90,7 +99,7 @@ soak: ## Executa carga bounded prolongada com amostras de memoria e backlog.
 	WDE_BENCH_MODE=soak WDE_BENCH_ROUNDS=1 WDE_BENCH_EVENTS=$${WDE_SOAK_EVENTS:-3000} WDE_BENCH_CONCURRENCY=$${WDE_SOAK_CONCURRENCY:-4} \
 		WDE_BENCH_TIMEOUT=$${WDE_SOAK_TIMEOUT:-4m} ./scripts/benchmark.sh
 
-images: ## Constroi os quatro artefatos de container com metadados OCI.
+images: ## Constroi os quatro artefatos centrais de container com metadados OCI.
 	WDE_VERSION=$${WDE_VERSION:-dev} WDE_REVISION=$${WDE_REVISION:-$$(git rev-parse HEAD)} \
 		docker compose --profile demo build migrate api worker chaoslab
 
