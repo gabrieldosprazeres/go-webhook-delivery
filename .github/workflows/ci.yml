@@ -143,6 +143,13 @@ jobs:
         run: make adversarial
       - name: Rehearse guarded rollback and forward recovery
         run: make rollback-rehearsal
+      - name: Reset disposable runtime data after adversarial checks
+        env:
+          WDE_POSTGRES_PORT: "55432"
+        run: |
+          docker compose --profile demo down --volumes --remove-orphans
+          docker compose --profile core up --detach --wait postgres
+          docker compose --profile core run --rm migrate
       - name: Start runtime services
         run: docker compose --profile core up --detach --no-deps api worker console
       - name: Verify migration, roles and readiness
