@@ -5,6 +5,52 @@ dos commits convencionais do repositório.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-25
+
+### Adicionado
+
+- Console web Go SSR/BFF responsivo com sessão derivada de API key, listagem de
+  endpoints e deliveries, timeline de tentativas, criação de endpoint, publicação de
+  evento, replay e métricas do próprio workspace.
+- Migration lógica v6 com sessões opacas, expiração idle/absolute, revogação,
+  auditoria, purge bounded, role PostgreSQL exclusiva e índices de fila/métricas.
+- Observabilidade operacional privada com OpenTelemetry Collector, Prometheus, Tempo
+  e Grafana provisionados como código, incluindo dois dashboards e canário de trace.
+- Smoke Playwright/Axe em Chromium desktop/mobile, com evidências de layout,
+  acessibilidade, login, cookie e logout.
+
+### Segurança
+
+- Cookie `__Host-`, CSP estrita, CSRF vinculado à sessão, validação de `Origin`, rate
+  limit antes do lookup, scopes vivos, máximo de cinco sessões e isolamento por RLS.
+- Grafana limitado ao loopback/túnel SSH; Prometheus, Tempo, Collector e listeners
+  operacionais permanecem sem domínio ou porta pública.
+- Artefatos do browser smoke são sanitizados, validados com canário e enviados
+  somente após sucesso; trace, vídeo e screenshot automático do login ficam
+  desligados.
+- Supply chain ampliada para as imagens pinadas de Collector, Prometheus, Tempo e
+  Grafana, com SBOM e bloqueio de vulnerabilidades High/Critical.
+
+### Corrigido
+
+- Logout agora falha fechado, não consome quota de endpoint e está disponível também
+  na navegação mobile.
+- `Referrer-Policy` compatível com a defesa de CSRF em formulários reais e atualização
+  de métricas pausável no lugar do meta-refresh inacessível.
+- Métrica de fila atual inclui itens antigos, purge respeita limite físico total e o
+  downgrade da migration serializa escritores concorrentes.
+- Dashboards do worker usam séries corretamente escopadas e links externos da vitrine
+  abrem em nova página sem desalinhamento do terminal.
+
+### Validação
+
+- Code Review final aprovado com zero blocker, warning ou suggestion.
+- QA aprovado com 244 testes, race detector, stress dos pacotes críticos, integração
+  PostgreSQL 17, Playwright/Axe desktop/mobile e p95 de `19,76 ms` para consulta com
+  25.000 tentativas.
+- Security Audit OWASP A01–A10 aprovado para CI de release; `govulncheck`, `npm audit`
+  e Gitleaks sem achados.
+
 ## [1.1.0] — 2026-09-25
 
 ### Adicionado

@@ -3,19 +3,19 @@
 [![CI](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](api/openapi.yaml)
-[![Release](https://img.shields.io/badge/release-v1.1.0-blue)](CHANGELOG.md)
+[![Release](https://img.shields.io/badge/release-v1.2.0-blue)](CHANGELOG.md)
 
 Serviço de entrega confiável de webhooks escrito em Go. O projeto demonstra ingestão
 idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento
 multi-tenant, assinatura HMAC, defesa SSRF e operação observável.
 
-> Estado atual: console web e observabilidade operacional em preparação para a próxima
-> release. O motor nunca promete `exactly-once`.
+> Estado atual: release v1.2.0 com console web e observabilidade operacional privada.
+> O motor nunca promete `exactly-once`.
 
 **Demonstração:** [vitrine pública](https://webhooks.gabrieldosprazeres.com.br) ·
 [Swagger/OpenAPI](https://docs.webhooks.gabrieldosprazeres.com.br) ·
 [descoberta da API](https://api.webhooks.gabrieldosprazeres.com.br) ·
-console autenticado em `console.webhooks.gabrieldosprazeres.com.br` após o deploy da release.
+[console autenticado](https://console.webhooks.gabrieldosprazeres.com.br).
 
 ## Problema e arquitetura
 
@@ -59,6 +59,9 @@ As ferramentas Go ficam pinadas no `go.mod` e são executadas com `go tool`.
 - Go 1.27.1;
 - Docker 29+ com Docker Compose;
 - GNU Make e `rg` (ripgrep).
+
+O smoke opcional de navegador também usa Node.js 26 e Chromium via Playwright; Node
+não entra nas imagens nem no runtime do produto.
 
 ## Início rápido
 
@@ -292,6 +295,7 @@ make benchmark
 make soak
 make container-smoke
 make easypanel-smoke
+make browser-smoke
 WDE_SUPPLY_CHAIN_OUTPUT="$(mktemp -d)" make supply-chain
 make secret-scan
 make check
@@ -346,6 +350,7 @@ docs/                PRD, arquitetura, ADRs, segurança, backlog e status
 - [Política de segurança](SECURITY.md)
 - [Auditoria de segurança final](docs/webhook-delivery-engine-security-audit.md)
 - [Auditoria de segurança do deploy EasyPanel](docs/webhook-delivery-engine-security-audit-easypanel.md)
+- [Auditoria de segurança do console e observabilidade](docs/webhook-delivery-engine-security-audit-console-observability.md)
 - [QA final da Sprint 6](docs/webhook-delivery-engine-qa-sprint-6.md)
 - [Runbook operacional](docs/operations-runbook.md)
 - [Demonstração de portfólio](docs/demo-runbook.md)
