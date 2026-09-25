@@ -25,8 +25,9 @@ Swagger UI, endpoint de descoberta e pipeline de CI.
 - `.env`, `.env.*`, certificados, chaves e `secrets/` permanecem ignorados.
 - O gerador usa CSPRNG do OpenSSL, materiais independentes, `umask 077`, arquivo
   `0600` e recusa sobrescrita.
-- Secrets do Compose são montados como arquivos `0400` no UID específico; senhas não
-  aparecem nos DSNs, imagens ou argumentos de build.
+- Um job sem rede e com somente `CAP_CHOWN` materializa os secrets como arquivos
+  `0400` no UID específico; runtimes montam o volume em read-only. Senhas não aparecem
+  nos DSNs, imagens ou argumentos de build.
 
 ## Headers HTTP
 

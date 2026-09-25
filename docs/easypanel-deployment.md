@@ -16,7 +16,7 @@ worker ------------------------------> destinos HTTPS públicos
   |                 volume de socket Unix
 api + migrate -----------------------> PostgreSQL 17
 
-sem domínio/porta: postgres, migrate, worker, api:9090 e worker:9091
+sem domínio/porta: secrets-init, postgres, migrate, worker, api:9090 e worker:9091
 ```
 
 O arquivo implantado é [`compose.easypanel.yaml`](../compose.easypanel.yaml), separado
@@ -90,14 +90,15 @@ para os três hosts públicos antes de divulgar as URLs.
 
 O EasyPanel executa `docker compose up --build -d`. A ordem declarada é:
 
-1. PostgreSQL inicializa o volume, SCRAM e roles mínimas;
-2. `migrate` espera o healthcheck, aplica as migrations e encerra com sucesso;
-3. API e worker iniciam somente após a migration;
-4. showcase e Swagger ficam independentes do banco.
+1. `secrets-init`, sem rede, materializa secrets `0400` para os runtimes e encerra;
+2. PostgreSQL inicializa o volume, SCRAM e roles mínimas;
+3. `migrate` espera ambos, aplica as migrations e encerra com sucesso;
+4. API e worker iniciam somente após a migration;
+5. showcase e Swagger ficam independentes do banco.
 
 O primeiro deploy precisa terminar com PostgreSQL/API/worker/showcase/Swagger ativos e
-`migrate` concluído com exit code `0`. Um job de migration parado com sucesso não é
-falha.
+`secrets-init`/`migrate` concluídos com exit code `0`. Jobs one-shot parados com
+sucesso não são falha.
 
 ## 6. Verificação externa
 

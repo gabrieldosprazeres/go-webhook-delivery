@@ -22,9 +22,10 @@ exigindo `sslmode=verify-full`.
 
 O proxy do EasyPanel termina TLS apenas para `showcase:8080`, `swagger:8080` e
 `api:8080`. PostgreSQL, worker, migration e listeners operacionais não recebem porta
-ou domínio público. Credenciais e key material entram por secrets do Compose, com
-arquivo `0400` no UID exato do processo. A vitrine é um binário sem dependência de
-banco ou segredos.
+ou domínio público. Credenciais e key material entram por secrets do Compose. Um job
+`secrets-init`, sem rede e com somente `CAP_CHOWN`, materializa os arquivos `0400` no
+UID do processo em volume dedicado; API, worker e migrator montam esse volume em modo
+read-only. A vitrine é um binário sem dependência de banco ou segredos.
 
 ## Alternativas descartadas
 

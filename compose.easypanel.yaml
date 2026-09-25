@@ -21,6 +21,36 @@ x-app-environment: &app-environment
   WDE_OTEL_TRACE_SAMPLE_RATIO: ${WDE_OTEL_TRACE_SAMPLE_RATIO:-0.1}
 
 services:
+  secrets-init:
+    image: postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
+    network_mode: none
+    entrypoint: [bash, /scripts/materialize-secrets.sh]
+    secrets:
+      - migrator_pgpass
+      - api_pgpass
+      - worker_pgpass
+      - auth_pepper
+      - idempotency_pepper
+      - fingerprint_pepper
+      - rate_limit_pepper
+      - cursor_pepper
+      - payload_keyring
+      - signing_keyring
+    volumes:
+      - application-secrets:/materialized
+      - ./deployments/easypanel/materialize-secrets.sh:/scripts/materialize-secrets.sh:ro
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64M
+          pids: 32
+    restart: "no"
+
   postgres:
     image: postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
     network_mode: none
@@ -85,16 +115,14 @@ services:
       GOOSE_DRIVER: postgres
       GOOSE_DBSTRING: postgres://wde_migrator@/wde?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable
       PGPASSFILE: /run/secrets/migrator_pgpass
-    secrets:
-      - source: migrator_pgpass
-        uid: "65532"
-        gid: "65532"
-        mode: 0400
     volumes:
       - postgres-socket:/var/run/postgresql:ro
+      - application-secrets:/run/secrets:ro
     depends_on:
       postgres:
         condition: service_healthy
+      secrets-init:
+        condition: service_completed_successfully
     <<: *app-security
     tmpfs:
       - "/tmp:size=16m,mode=1777"
@@ -128,17 +156,9 @@ services:
       WDE_CURSOR_PEPPER_FILE: /run/secrets/cursor_pepper
       WDE_PAYLOAD_KEYRING_FILE: /run/secrets/payload_keyring
       WDE_SIGNING_KEYRING_FILE: /run/secrets/signing_keyring
-    secrets:
-      - {source: api_pgpass, uid: "65532", gid: "65532", mode: 0400}
-      - {source: auth_pepper, uid: "65532", gid: "65532", mode: 0400}
-      - {source: idempotency_pepper, uid: "65532", gid: "65532", mode: 0400}
-      - {source: fingerprint_pepper, uid: "65532", gid: "65532", mode: 0400}
-      - {source: rate_limit_pepper, uid: "65532", gid: "65532", mode: 0400}
-      - {source: cursor_pepper, uid: "65532", gid: "65532", mode: 0400}
-      - {source: payload_keyring, uid: "65532", gid: "65532", mode: 0400}
-      - {source: signing_keyring, uid: "65532", gid: "65532", mode: 0400}
     volumes:
       - postgres-socket:/var/run/postgresql:ro
+      - application-secrets:/run/secrets:ro
     expose: ["8080"]
     depends_on:
       migrate:
@@ -186,12 +206,9 @@ services:
       WDE_WORKER_LEASE_TTL: ${WDE_WORKER_LEASE_TTL:-30s}
       WDE_WORKER_RETRY_BASE: ${WDE_WORKER_RETRY_BASE:-1s}
       WDE_WORKER_RETRY_CAP: ${WDE_WORKER_RETRY_CAP:-15m}
-    secrets:
-      - {source: worker_pgpass, uid: "65532", gid: "65532", mode: 0400}
-      - {source: payload_keyring, uid: "65532", gid: "65532", mode: 0400}
-      - {source: signing_keyring, uid: "65532", gid: "65532", mode: 0400}
     volumes:
       - postgres-socket:/var/run/postgresql:ro
+      - application-secrets:/run/secrets:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -280,6 +297,7 @@ services:
 volumes:
   postgres-data:
   postgres-socket:
+  application-secrets:
 
 secrets:
   postgres_password:
