@@ -3,6 +3,20 @@
 Todas as mudanças relevantes deste projeto são documentadas neste arquivo a partir
 dos commits convencionais do repositório.
 
+## [Unreleased]
+
+### Adicionado
+
+- Vitrine pública em pt-BR, Swagger UI e topologia de demonstração para EasyPanel.
+- Gerador local de segredos fortes e smoke de CI para a topologia produtiva completa.
+
+### Segurança
+
+- PostgreSQL sem porta TCP no host único, acessado por socket Unix explicitamente
+  declarado, com SCRAM, roles mínimas e credenciais montadas como arquivos `0400`.
+- API, worker e vitrine continuam non-root, read-only, sem capabilities e com limites
+  conservadores adequados à VPS de demonstração.
+
 ## [1.0.1] — 2026-09-24
 
 ### Corrigido

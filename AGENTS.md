@@ -5,7 +5,7 @@
 ## Stack
 
 - Go 1.27.x, PostgreSQL 17.x, `net/http`, `log/slog`, `pgx/v5`, `sqlc`, migrations versionadas, OpenTelemetry/Prometheus e Testcontainers.
-- Monólito modular com binários `api`, `worker` e `chaoslab`; sem frontend, Redis, Kafka ou Kubernetes no MVP.
+- Monólito modular com binários `api`, `worker` e `chaoslab`, mais os servidores estáticos `showcase` e `docs`; sem frontend de negócio, Redis, Kafka ou Kubernetes no MVP.
 
 ## Regras de negócio permanentes
 
@@ -17,6 +17,8 @@
 - Destinos são hostis: HTTPS, validação SSRF em cada conexão, IP validado fixado no `DialContext`, proxy/redirect desabilitados e TLS verificado.
 - Segredos HMAC e payloads ficam cifrados no nível da aplicação; replay é recusado depois do purge do payload.
 - Chaos Lab e profiling não podem integrar a superfície/imagem produtiva.
+- A vitrine `showcase` é somente apresentação: não acessa banco, segredos ou regras de negócio.
+- `docs` serve o OpenAPI e assets Swagger pinados, sem persistir autorização no navegador; não acessa banco ou secrets.
 
 ## Regras técnicas do projeto
 
@@ -38,3 +40,5 @@
 - `docs/webhook-delivery-engine-data-architecture.md` — schema e migrations (próxima etapa).
 - `docs/webhook-delivery-engine-backlog.md` — sprints e tasks (próxima etapa).
 - `docs/webhook-delivery-engine-status.md` — progresso do pipeline (quando criado).
+- `docs/easypanel-deployment.md` — topologia e runbook da demonstração pública.
+- `docs/webhook-delivery-engine-security-audit-easypanel.md` — gate de segurança do deploy.

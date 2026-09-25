@@ -3,13 +3,13 @@
 [![CI](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/gabrieldosprazeres/go-webhook-delivery/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](api/openapi.yaml)
-[![Release](https://img.shields.io/badge/release-v1.0.0-blue)](CHANGELOG.md)
+[![Release](https://img.shields.io/badge/release-v1.0.1-blue)](CHANGELOG.md)
 
 Serviço de entrega confiável de webhooks escrito em Go. O projeto demonstra ingestão
 idempotente, entrega `at-least-once`, retries, leases com fencing, isolamento
 multi-tenant, assinatura HMAC, defesa SSRF e operação observável.
 
-> Estado atual: `v1.0.0` concluída e validada localmente. Code Review, QA, auditoria
+> Estado atual: `v1.0.1` concluída e validada. Code Review, QA, auditoria
 > OWASP, matriz adversarial, rollback, smoke de containers, SBOM e scans passaram sem
 > ressalvas bloqueadoras. O projeto nunca promete `exactly-once`.
 
@@ -43,7 +43,7 @@ enquanto não existir evidência operacional que justifique novos serviços.
 - Goose para migrations explícitas;
 - Prometheus e OpenTelemetry OTLP/HTTP para observabilidade;
 - `go test`, race detector, vet, Staticcheck e `govulncheck`;
-- Docker Compose para o ambiente local.
+- Docker Compose para ambiente local e uma topologia de produção no EasyPanel.
 
 As ferramentas Go ficam pinadas no `go.mod` e são executadas com `go tool`.
 
@@ -55,7 +55,7 @@ As ferramentas Go ficam pinadas no `go.mod` e são executadas com `go tool`.
 
 ## Início rápido
 
-A jornada reproduzível completa cria um PostgreSQL efêmero isolado, compila os três binários e demonstra bootstrap, HMAC, rotação com assinatura dupla, replay, retry, DLQ e métricas. Em uma máquina com os pré-requisitos, ela termina em menos de 10 minutos e remove credenciais/processos/volume ao sair:
+A jornada reproduzível completa cria um PostgreSQL efêmero isolado, compila os binários e demonstra bootstrap, HMAC, rotação com assinatura dupla, replay, retry, DLQ e métricas. Em uma máquina com os pré-requisitos, ela termina em menos de 10 minutos e remove credenciais/processos/volume ao sair:
 
 ```bash
 make quickstart
@@ -107,6 +107,25 @@ go run ./cmd/api credentials bootstrap --name 'Demo local' \
 
 O arquivo criado contém `api_key`. O [quickstart detalhado](docs/quickstart.md) traz os exemplos curl para endpoint, evento, consulta, replay, rotação e métricas; o contrato completo está em [`api/openapi.yaml`](api/openapi.yaml). Produção aceita somente destinos HTTPS; HTTP é permitido apenas em loopback nos profiles local/test com a flag explícita.
 
+## Demonstração pública no EasyPanel
+
+O repositório inclui uma topologia produtiva separada em
+[`compose.easypanel.yaml`](compose.easypanel.yaml). Ela publica três superfícies:
+
+- `showcase:8080`: landing page em pt-BR para recrutadores e apresentação do case;
+- `swagger:8080`: contrato OpenAPI navegável;
+- `api:8080`: API real, autenticada e isolada das probes operacionais.
+
+PostgreSQL, migration, worker e portas operacionais não recebem domínio ou porta
+pública. No host único, API/worker/migrator acessam o PostgreSQL por um volume de
+socket Unix protegido; o banco usa SCRAM e não abre listener TCP. Segredos são
+montados como arquivos `0400` no UID do processo e nunca entram na imagem ou no Git.
+
+O guia completo, incluindo geração de segredos, configuração de domínios, rollback
+e limitações honestas da demo, está em
+[Deploy no EasyPanel](docs/easypanel-deployment.md). A topologia exata é exercitada
+na CI com `make easypanel-smoke` antes da publicação.
+
 ## Execução sem containers
 
 ```bash
@@ -128,6 +147,7 @@ Principais variáveis:
 |---|---|
 | `WDE_PROFILE` | `local`, `test` ou `production` |
 | `WDE_DATABASE_URL` | DSN da role específica do processo |
+| `WDE_DATABASE_LOCAL_SOCKET` | opt-in fail-closed para o socket `/var/run/postgresql`; default `false` |
 | `WDE_ADMIN_DATABASE_URL` | DSN usada exclusivamente pelos comandos one-shot de credenciais |
 | `WDE_DATABASE_TIMEOUT` | prazo para startup/readiness do banco; default `5s` |
 | `WDE_OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint OTLP/HTTP opcional; vazio mantém traces no-op |
@@ -158,7 +178,13 @@ Principais variáveis:
 | `WDE_INGRESS_TLS_TERMINATED` | declaração obrigatória para API em produção |
 | `WDE_*_FILE` | paths de peppers e keyrings montados em produção; rate limit e cursor usam peppers independentes |
 
-No profile `production`, o startup falha se o PostgreSQL não usar `sslmode=verify-full`, TLS de entrada não estiver declarado, profiling/HTTP externo estiver habilitado ou os secret files estiverem ausentes, forem symlinks, tiverem permissões acima de `0600` ou pertencerem a outro UID.
+No profile `production`, conexões TCP ao PostgreSQL exigem `sslmode=verify-full`. A
+alternativa local exige `WDE_DATABASE_LOCAL_SOCKET=true`, host vazio, exatamente o
+socket `/var/run/postgresql` e `sslmode=disable`; combinações ambíguas falham
+fechado. O socket exige `passfile` regular, pertencente ao processo e com modo máximo
+`0600`; DSNs produtivos não podem conter senha embutida. O startup também falha se TLS de entrada não estiver declarado,
+profiling/HTTP externo estiver habilitado ou os secret files estiverem ausentes,
+forem symlinks, tiverem permissões acima de `0600` ou pertencerem a outro UID.
 
 O scheduler nunca reserva mais que os slots livres. Uma sequence monotônica, sem row lock global, alimenta cursores persistidos por workspace e endpoint inclusive entre batches unitários e workers concorrentes. Workspace, endpoint runtime e delivery usam locks locais com `SKIP LOCKED`, portanto um tenant travado não impede progresso independente. Cada claim possui deadline de banco explícito. Polling vazio usa backoff exponencial com jitter para evitar sincronização entre instâncias. Um lease expirado abandona a tentativa antiga e incrementa o fencing token antes de novo envio. Resultados com owner/token vencidos afetam zero linhas.
 
@@ -244,6 +270,7 @@ make adversarial
 make benchmark
 make soak
 make container-smoke
+make easypanel-smoke
 WDE_SUPPLY_CHAIN_OUTPUT="$(mktemp -d)" make supply-chain
 make secret-scan
 make check
@@ -266,7 +293,7 @@ make migrate-up
 ## Estrutura
 
 ```text
-cmd/                 composition roots de api, worker e chaoslab
+cmd/                 composition roots de api, worker, chaoslab, showcase e docs
 internal/auth/       API keys, principal e bootstrap/revogacao
 internal/endpoint/   destinos, subscriptions e segredo de assinatura
 internal/event/      ingresso idempotente e fan-out transacional
@@ -278,7 +305,7 @@ internal/platform/   configuracao, criptografia, logging, telemetria e lifecycle
 examples/            consumidor HMAC verificável
 scripts/             demonstração local efêmera
 db/migrations/       migrations versionadas e fail-closed
-deployments/         Dockerfiles e bootstrap local do PostgreSQL
+deployments/         Dockerfiles e bootstrap local/produtivo do PostgreSQL
 api/                 contrato OpenAPI
 test/                suites de integração e adversariais
 docs/                PRD, arquitetura, ADRs, segurança, backlog e status
@@ -286,7 +313,7 @@ docs/                PRD, arquitetura, ADRs, segurança, backlog e status
 
 ## Decisões e segurança
 
-- [Changelog da v1.0.0](CHANGELOG.md)
+- [Changelog](CHANGELOG.md)
 - [Arquitetura](docs/webhook-delivery-engine-architecture.md)
 - [Arquitetura de dados](docs/webhook-delivery-engine-data-architecture.md)
 - [Backlog do MVP](docs/webhook-delivery-engine-backlog.md)
@@ -294,9 +321,11 @@ docs/                PRD, arquitetura, ADRs, segurança, backlog e status
 - [Status](docs/webhook-delivery-engine-status.md)
 - [Política de segurança](SECURITY.md)
 - [Auditoria de segurança final](docs/webhook-delivery-engine-security-audit.md)
+- [Auditoria de segurança do deploy EasyPanel](docs/webhook-delivery-engine-security-audit-easypanel.md)
 - [QA final da Sprint 6](docs/webhook-delivery-engine-qa-sprint-6.md)
 - [Runbook operacional](docs/operations-runbook.md)
 - [Demonstração de portfólio](docs/demo-runbook.md)
+- [Deploy no EasyPanel](docs/easypanel-deployment.md)
 - [Supply chain e imagens](docs/supply-chain.md)
 - [Checklist de release](docs/release-checklist.md)
 
