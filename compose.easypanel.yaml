@@ -340,7 +340,7 @@ services:
     restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:v3.13.3-distroless@sha256:2e9a8ad75536755572d703e645fcc39c8104d9f0215d49d613db35194b0d8bc2
+    image: prom/prometheus:v3.15.0-distroless@sha256:b2a413d5a03ea6a76782a508d1c7947440bba3b973931a25676e278431891b01
     command:
       - --config.file=/etc/prometheus/prometheus.yaml
       - --storage.tsdb.path=/prometheus
@@ -364,7 +364,7 @@ services:
     restart: unless-stopped
 
   tempo:
-    image: grafana/tempo:2.10.8@sha256:f0561deb1c68ec44d6e6e7e4487f30106c4e5e768642077695b37958b105812a
+    image: grafana/tempo:3.1.0-rc.1@sha256:17ba563fb5830035faf0d99368021a53039ee50628bf1b93f17c70ba94d65ada
     command: [-config.file=/etc/tempo/tempo.yaml]
     volumes:
       - ./deployments/observability/tempo.yaml:/etc/tempo/tempo.yaml:ro
@@ -402,6 +402,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
       GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      GF_PLUGINS_DISABLE_PLUGINS: zipkin
       GF_INSTALL_PLUGINS: ""
       GF_LOG_MODE: console
     volumes:

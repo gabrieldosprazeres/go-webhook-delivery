@@ -46,6 +46,15 @@ futura exigiria finding, justificativa, responsável, mitigação e expiração 
 Os SBOMs podem conter inventário operacional e devem ser tratados como artefatos de CI,
 não publicados por padrão.
 
+O release `v1.2.0` possui uma exceção explícita somente para o digest pinado do
+Grafana. O arquivo
+[`deployments/observability/grafana/trivyignore.yaml`](../deployments/observability/grafana/trivyignore.yaml)
+registra quatro IDs, caminho afetado, controle compensatório e expiração em
+`2026-10-09`. Trivy usa `--show-suppressed`, portanto os findings continuam na
+evidência; uma exceção vencida ou qualquer ID novo volta a falhar o job. O plugin
+Zipkin, que não é usado, fica desabilitado no runtime e fora do scan. Nenhuma exceção
+se aplica às imagens próprias, Collector, Prometheus ou Tempo.
+
 O diretório de evidências também contém `tools.tsv`, com Syft, Trivy e Gitleaks,
 versão, asset e checksums esperado/observado; `trivy-db-metadata.json`, copiado da base
 efetivamente usada; e `gitleaks.json` redigido. Ausência desses metadados falha o gate;
@@ -77,7 +86,7 @@ redirecionado, tipo/modo/owner divergente, inventário extra, incompleto, duplic
 malformado ou com traversal falham fechados. A CI gera e anexa a evidência somente
 depois de testar as mesmas imagens.
 
-## Imagens de apresentação
+## Imagens de apresentação e observabilidade
 
 O deploy EasyPanel acrescenta `showcase` e `swagger`. Ambos executam um servidor Go
 distroless como non-root/read-only. O build de `swagger` copia somente os assets
@@ -85,3 +94,10 @@ estáticos da imagem oficial Swagger UI pinada por tag e digest; Nginx e o entry
 de terceiros não chegam ao runtime. A CI de produção gera CycloneDX/SPDX e bloqueia
 High/Critical nas duas imagens depois do smoke da topologia completa. Qualquer rebuild
 altera a evidência e exige novo scan antes do deploy.
+
+Collector, Prometheus, Tempo e Grafana também são escaneados pelo digest exato. O
+Prometheus `v3.15.0-distroless` e o Tempo `3.1.0-rc.1` foram promovidos somente depois
+de scan High/Critical limpo. O uso temporário do RC do Tempo evita doze findings já
+corrigidos nessa linha e é aceitável porque traces são efêmeros, o serviço não recebe
+ingress e o smoke valida ingestão e consulta reais; a primeira release estável `3.1.x`
+limpa deve substituí-lo.

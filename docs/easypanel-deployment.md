@@ -99,7 +99,8 @@ para `0.0.0.0`. Ele não faz parte da demo para recrutadores.
 
 Para que o Docker materialize esse bind, somente o Grafana participa também da bridge
 `grafana-host-access`, que não possui outros serviços. Pré-instalação e auto-update de
-plugins ficam desabilitadas. O operador acessa o Grafana somente pelo túnel SSH
+plugins ficam desabilitadas, assim como o datasource Zipkin não utilizado. O operador
+acessa o Grafana somente pelo túnel SSH
 criptografado:
 
 ```bash

@@ -11,7 +11,7 @@ Compose do EasyPanel, smoke de navegador e supply chain.
 
 ✅ **APROVADO para pull request e pipeline de release**, sem blocker de segurança no
 código. O deploy permanece condicionado ao smoke EasyPanel verde em runner Linux
-limpo, SBOM e Trivy das imagens exatas, inclusive os quatro vendors de observabilidade.
+  limpo, SBOM e Trivy das imagens exatas, inclusive os quatro vendors de observabilidade.
 Essa condição impede promover um artefato diferente do auditado. O smoke local não
 iniciou por corrupção pré-existente do content store do Docker Desktop no blob do
 PostgreSQL; a renderização e as invariantes estáticas do Compose foram aprovadas.
@@ -59,7 +59,7 @@ PostgreSQL; a renderização e as invariantes estáticas do Compose foram aprova
 | A03 — Injection | Aprovado | SQL parametrizado, funções `SECURITY DEFINER` com `search_path=pg_catalog`, HTML escapado e DOM atualizado com `textContent`. |
 | A04 — Insecure Design | Aprovado | BFF same-origin separado, CSRF, guard global antes de tracing/sessão/banco, login limitado por prefixo, máximo de cinco sessões concorrentes, timeouts e purge bounded. |
 | A05 — Security Misconfiguration | Aprovado | Containers non-root/read-only/cap-drop; Grafana somente em `127.0.0.1:33000`; Prometheus, Tempo, Collector e listeners operacionais sem ingress; Tempo em `tmpfs` limitado a 256 MiB. |
-| A06 — Vulnerable Components | Aprovado | `govulncheck` e `npm audit` limpos; imagens e Actions pinadas; SBOM/Trivy obrigatórios no pipeline final. |
+| A06 — Vulnerable Components | Aprovado com exceção temporal | `govulncheck` e `npm audit` limpos; imagens e Actions pinadas; Prometheus e Tempo sem High/Critical; quatro IDs do Grafana escopados ao digest, justificados e com expiração em 2026-10-09. |
 | A07 — Identification and Authentication Failures | Aprovado | Sessão curta server-side, revogação fail-closed, scopes relidos, expiração idle/absolute, auditoria atômica e login throttled por prefixo HMAC. |
 | A08 — Software and Data Integrity Failures | Aprovado | Migrations versionadas, downgrade serializado e fail-closed, lockfiles, digests e evidência de browser sanitizada. |
 | A09 — Security Logging and Monitoring Failures | Aprovado | Logs/traces allowlisted; sem payload, URL, key, cookie ou tenant em labels; ingestão Tempo limitada, regra de descarte carregada e observabilidade operacional privada. |
@@ -80,6 +80,10 @@ PostgreSQL; a renderização e as invariantes estáticas do Compose foram aprova
   do gate de `500 ms`.
 - Playwright/Axe: duas matrizes aprovadas (`desktop-chromium` e
   `mobile-chromium`), além do canário de sanitização de artefatos.
+- Trivy: Prometheus `v3.15.0-distroless` e Tempo `3.1.0-rc.1` sem High/Critical.
+  O relatório do Grafana preserva quatro findings suprimidos e seus controles
+  compensatórios; plugin Zipkin desabilitado e não escaneado por não integrar a
+  topologia provisionada.
 - Revisão de código: zero blockers, warnings ou suggestions após as correções.
 - QA final: aprovado sem warnings antes do endurecimento adicional dos artefatos;
   a regressão incremental correspondente também passou localmente.
@@ -93,7 +97,9 @@ PostgreSQL; a renderização e as invariantes estáticas do Compose foram aprova
 2. Métricas do cliente vêm do PostgreSQL com RLS; nunca adicionar `workspace_id` aos
    labels do Prometheus.
 3. Não promover se o smoke EasyPanel, os targets Prometheus, o canário Tempo, os
-   dashboards/datasources, o outage test, SBOM ou Trivy falharem.
+   dashboards/datasources, o outage test, SBOM ou Trivy falharem. Não prorrogar as
+   exceções Grafana sem nova triagem; release corrigida deve substituir o digest antes
+   de `2026-10-09`.
 4. Preservar os secrets existentes no upgrade e adicionar somente os novos materiais
    independentes do console/Grafana conforme o runbook.
 5. A regra `WDETempoDiscardingSpans` é visível no Prometheus/Grafana, mas este release

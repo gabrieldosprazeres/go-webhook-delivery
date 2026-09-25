@@ -45,6 +45,13 @@ dos commits convencionais do repositório.
   abrem em nova página sem desalinhamento do terminal.
 - Bind privado do Grafana usa bridge dedicada sem pares para funcionar em versões
   atuais do Docker, com pré-instalação e auto-update de plugins desabilitados.
+- Prometheus atualizado para `v3.15.0-distroless`, que incorpora gRPC-Go `v1.83.2`
+  e elimina os achados High `CVE-2026-84304` e `CVE-2026-84445`; Tempo promovido ao
+  digest limpo de `3.1.0-rc.1` enquanto a linha estável ainda carrega dependências
+  vulneráveis.
+- Exceções temporárias do Grafana são escopadas ao digest e ao caminho, preservadas
+  no relatório Trivy, justificadas e expiram em `2026-10-09`; o plugin Zipkin não
+  utilizado permanece desabilitado e fora do scan.
 
 ### Validação
 

@@ -13,6 +13,7 @@ case "$output" in
   /*) ;;
   *) echo "OUTPUT_DIRECTORY must be absolute" >&2; exit 64 ;;
 esac
+repository=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 mkdir -p "$output"
 chmod 700 "$output"
 tools=$(mktemp -d "${TMPDIR:-/tmp}/wde-supply-tools.XXXXXX")
@@ -37,8 +38,21 @@ for image in "$@"; do
   scan="$output/$name.trivy.json"
   "$tools/syft" "docker:$image_id" --quiet -o "cyclonedx-json=$cyclonedx"
   "$tools/syft" "docker:$image_id" --quiet -o "spdx-json=$spdx"
-  "$tools/trivy" image --cache-dir "$db" --scanners vuln --severity HIGH,CRITICAL \
-    --exit-code 1 --format json --output "$scan" "$image_id"
+  if [ "$image" = "grafana/grafana:13.1.6@sha256:d8276d620291d3aaae3e31dde6d63e6807afee49825f04e8aa7392bbe024216f" ]; then
+    "$tools/trivy" image --cache-dir "$db" --scanners vuln --severity HIGH,CRITICAL \
+      --ignorefile "$repository/deployments/observability/grafana/trivyignore.yaml" \
+      --skip-dirs /usr/share/grafana/data/plugins-bundled/zipkin --show-suppressed \
+      --exit-code 1 --format json --output "$scan" "$image_id"
+    jq -e '
+      ([.Results[]?.Vulnerabilities[]?] | length) == 0 and
+      ([.Results[]?.ExperimentalModifiedFindings[]?.Finding.VulnerabilityID] | unique) ==
+        ["CVE-2026-14456", "CVE-2026-21728", "CVE-2026-28377", "CVE-2026-43871"] and
+      ([.Results[]?.ExperimentalModifiedFindings[]?.Statement | select(length > 0)] | unique | length) == 4
+    ' "$scan" >/dev/null
+  else
+    "$tools/trivy" image --cache-dir "$db" --scanners vuln --severity HIGH,CRITICAL \
+      --show-suppressed --exit-code 1 --format json --output "$scan" "$image_id"
+  fi
   printf '%s\t%s\n' "$image" "$image_id" >> "$manifest"
 done
 "$tools/gitleaks" git --redact --no-banner --exit-code 1 --report-format json \
